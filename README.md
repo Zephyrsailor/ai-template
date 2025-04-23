@@ -37,7 +37,8 @@ ai-template/
 └── backend/                 # Python后端应用
     ├── app/                 # 应用代码
     │   ├── main.py          # FastAPI 入口
-    │   ├── routes/          # API路由
+    │   ├── config.py        # 配置项
+    │   ├── routes           # 路由
     │   └── providers/       # LLM服务提供者
     └── requirements.txt     # Python依赖
 ```
