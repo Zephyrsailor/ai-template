@@ -1,0 +1,117 @@
+# Node.js / JavaScript
+node_modules/
+npm-debug.log
+yarn-debug.log
+yarn-error.log
+package-lock.json
+yarn.lock
+.pnp.*
+.npm
+*.tgz
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.pytest_cache/
+.coverage
+htmlcov/
+
+# 环境变量和密钥
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# 构建输出
+/frontend/build/
+/frontend/dist/
+/build
+/dist
+
+# 日志
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+# 缓存和暂存
+.cache/
+.parcel-cache/
+.eslintcache
+.stylelintcache
+.rpt2_cache/
+.rts2_cache_cjs/
+.rts2_cache_es/
+.rts2_cache_umd/
+__pycache__/
+.pyc
+
+# 编辑器/IDE相关
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# 测试覆盖率报告
+coverage/
+.nyc_output/
+
+# 运行时数据
+.DS_Store
+*.sqlite
+*.sqlite3
+*.db
+data/
+
+# 依赖特定文件
+tsconfig.tsbuildinfo
+.npmrc
+
+# 其他
+.vercel
+.next
+.serverless
+.docusaurus
+
+# 前端特定
+/frontend/node_modules/
+/frontend/.pnp
+/frontend/.pnp.js
+/frontend/coverage
+/frontend/.next/
+/frontend/out/
+/frontend/.DS_Store
+
+# 后端特定
+/backend/venv/
+/backend/__pycache__/
+/backend/.env
+/backend/dist/
+/backend/uploads/

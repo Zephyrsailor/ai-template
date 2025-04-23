@@ -1,0 +1,5 @@
+fastapi
+uvicorn[standard]  # ASGI server
+openai>=1.0        # OpenAI/DeepSeek client library
+python-dotenv      # For loading .env file
+# aiohttp might be needed implicitly by openai async
