@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import styled from 'styled-components';
-import { FaRobot, FaChevronDown, FaChevronUp, FaSpinner } from 'react-icons/fa';
+import { FaRobot, FaChevronDown, FaChevronUp, FaSpinner, FaBrain } from 'react-icons/fa';
 import MarkdownRenderer from './MarkdownRenderer';
 
 const ThinkingWrapper = styled.div.attrs(props => ({
@@ -8,7 +8,8 @@ const ThinkingWrapper = styled.div.attrs(props => ({
 }))`
   width: 100%;
   opacity: ${({ $isThinking }) => ($isThinking ? 0.98 : 1)};
-  margin-bottom: 8px;
+  margin-bottom: 12px;
+  transition: all 0.3s ease;
 `;
 
 const ThinkingContainer = styled.div.attrs(props => ({
@@ -16,9 +17,12 @@ const ThinkingContainer = styled.div.attrs(props => ({
 }))`
   background-color: ${({ $isHistorical }) => $isHistorical ? '#f1f3f5' : '#f5f5f5'};
   border: 1px solid ${({ $isHistorical }) => $isHistorical ? '#d1d9e6' : '#c8d3e6'};
-  border-radius: 12px;
+  border-radius: 16px;
   overflow: hidden;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  box-shadow: ${({ $collapsed }) => $collapsed 
+    ? '0 2px 5px rgba(0, 0, 0, 0.05)' 
+    : '0 3px 10px rgba(0, 0, 0, 0.08)'};
+  transition: all 0.3s ease;
 `;
 
 const ThinkingHeader = styled.div.attrs(props => ({
@@ -26,12 +30,15 @@ const ThinkingHeader = styled.div.attrs(props => ({
 }))`
   display: flex;
   align-items: center;
-  padding: 12px 16px;
-  background-color: ${({ $isHistorical }) => $isHistorical ? '#e9ecef' : '#edf2f7'};
+  padding: ${({ $collapsed }) => $collapsed ? '10px 16px' : '14px 18px'};
+  background-color: ${({ $isHistorical, $collapsed }) => 
+    $collapsed 
+      ? ($isHistorical ? '#e9ecef' : '#edf2f7') 
+      : ($isHistorical ? '#e2e8f0' : '#e5e9f2')};
   border-bottom: ${({ $collapsed }) => $collapsed ? 'none' : '1px solid #d1d9e6'};
   cursor: pointer;
   user-select: none;
-  transition: background-color 0.2s ease;
+  transition: all 0.2s ease;
   
   &:hover {
     background-color: ${({ $isHistorical }) => 
@@ -40,16 +47,28 @@ const ThinkingHeader = styled.div.attrs(props => ({
 `;
 
 const HeaderIcon = styled.div`
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
-  background-color: #6c757d;
+  background-color: ${({ $isThinking }) => $isThinking ? '#6366f1' : '#6c757d'};
   color: white;
   display: flex;
   justify-content: center;
   align-items: center;
-  margin-right: 10px;
+  margin-right: 12px;
   flex-shrink: 0;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  transition: all 0.3s ease;
+  
+  ${({ $collapsed }) => $collapsed && `
+    animation: pulse 2s infinite;
+    
+    @keyframes pulse {
+      0% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.4); }
+      70% { box-shadow: 0 0 0 6px rgba(99, 102, 241, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0); }
+    }
+  `}
 `;
 
 const SpinnerIcon = styled.div`
@@ -64,7 +83,7 @@ const SpinnerIcon = styled.div`
 `;
 
 const HeaderTitle = styled.div`
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 600;
   color: #4a5568;
   flex-grow: 1;
@@ -72,33 +91,58 @@ const HeaderTitle = styled.div`
   align-items: center;
 `;
 
-const ToggleButton = styled.div.attrs(props => ({
-  className: props.className
+const ToggleButton = styled.button.attrs(props => ({
+  className: props.className,
+  type: 'button',
+  'aria-label': props.$collapsed ? '展开思考内容' : '收起思考内容'
 }))`
   color: #4a6cf7;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
   background-color: rgba(74, 108, 247, 0.1);
   flex-shrink: 0;
   transition: all 0.2s;
+  border: none;
+  outline: none;
   
   &:hover {
     background-color: rgba(74, 108, 247, 0.2);
     transform: scale(1.05);
+  }
+  
+  &:focus {
+    box-shadow: 0 0 0 2px rgba(74, 108, 247, 0.3);
   }
 `;
 
 const ToggleText = styled.span.attrs(props => ({
   className: props.className
 }))`
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
   color: #4a6cf7;
   margin-right: 8px;
+`;
+
+const CollapsedIndicator = styled.div`
+  display: ${({ $collapsed }) => $collapsed ? 'flex' : 'none'};
+  align-items: center;
+  margin-right: 12px;
+  color: #6366f1;
+  gap: 4px;
+  font-size: 13px;
+  
+  .dot {
+    width: 4px;
+    height: 4px;
+    background-color: #6366f1;
+    border-radius: 50%;
+    margin: 0 1px;
+  }
 `;
 
 const ThinkingContentWrapper = styled.div.attrs(props => ({
@@ -106,11 +150,11 @@ const ThinkingContentWrapper = styled.div.attrs(props => ({
 }))`
   max-height: ${({ $collapsed }) => $collapsed ? '0' : '700px'};
   overflow: hidden;
-  transition: max-height 0.5s ease-out;
+  transition: max-height 0.3s ease-out;
 `;
 
 const ThinkingContent = styled.div`
-  padding: 16px;
+  padding: 16px 18px;
   color: #4a5568;
   font-size: 14px;
   line-height: 1.6;
@@ -158,21 +202,55 @@ const ThinkingDot = styled.div`
   }
 `;
 
+const WordCount = styled.div`
+  font-size: 12px;
+  color: #718096;
+  margin-left: auto;
+  padding-left: 12px;
+  display: ${({ $collapsed }) => $collapsed ? 'block' : 'none'};
+`;
+
 const ThinkingBubble = ({ content, isThinking = true, isHistorical = false }) => {
+  // 用户控制的折叠状态
+  const [userCollapsed, setUserCollapsed] = useState(isHistorical);
+  // 实际折叠状态 (考虑用户操作和自动展开)
   const [collapsed, setCollapsed] = useState(isHistorical);
   const contentRef = useRef(null);
   
+  // 首次渲染时，如果是历史思考内容则默认折叠
   useEffect(() => {
-    if (isThinking && content && content.length > 0) {
-      setCollapsed(false);
-    }
-    
-    if (!isThinking && isHistorical) {
+    if (isHistorical) {
+      setUserCollapsed(true);
       setCollapsed(true);
     }
-  }, [isThinking, isHistorical, content]);
+  }, []);
   
-  const toggleCollapse = () => {
+  // 当内容更新时，仅在特定条件下更新折叠状态
+  useEffect(() => {
+    // 只有在没有用户干预的情况下才自动展开/折叠
+    // 当开始思考或内容更新时，展开显示（但不覆盖用户操作）
+    if (isThinking && content && content.length > 0 && collapsed) {
+      // 仅当用户没有手动收起时才自动展开
+      if (!userCollapsed) {
+        setCollapsed(false);
+      }
+    }
+    
+    // 思考完成且是历史内容时才折叠（不覆盖用户已手动展开的）
+    if (!isThinking && isHistorical && !collapsed) {
+      // 仅当用户没有手动展开时才自动折叠
+      if (userCollapsed) {
+        setCollapsed(true);
+      }
+    }
+  }, [isThinking, isHistorical, content, userCollapsed]);
+  
+  // 处理用户点击折叠/展开事件
+  const handleToggleCollapse = (e) => {
+    e.stopPropagation();
+    // 记录用户选择
+    setUserCollapsed(!userCollapsed);
+    // 实际设置折叠状态
     setCollapsed(!collapsed);
   };
   
@@ -181,17 +259,23 @@ const ThinkingBubble = ({ content, isThinking = true, isHistorical = false }) =>
   const displayContent = content || "";
   const hasContent = displayContent.trim().length > 0;
   
+  // 计算内容字数
+  const wordCount = displayContent ? displayContent.length : 0;
+  const formattedCount = wordCount > 1000 
+    ? `${Math.floor(wordCount/1000)}k+字符` 
+    : `${wordCount}字符`;
+  
   return (
     <ThinkingWrapper $isThinking={isThinking}>
-      <ThinkingContainer $isHistorical={isHistorical}>
+      <ThinkingContainer $isHistorical={isHistorical} $collapsed={collapsed}>
         <ThinkingHeader 
-          onClick={toggleCollapse} 
+          onClick={handleToggleCollapse}
           $collapsed={collapsed}
           $isHistorical={isHistorical}
           $isThinking={isThinking}
         >
-          <HeaderIcon>
-            <FaRobot size={16} />
+          <HeaderIcon $isThinking={isThinking} $collapsed={collapsed}>
+            {isThinking ? <FaBrain size={16} /> : <FaRobot size={16} />}
           </HeaderIcon>
           <HeaderTitle>
             {headerText}
@@ -201,10 +285,28 @@ const ThinkingBubble = ({ content, isThinking = true, isHistorical = false }) =>
               </SpinnerIcon>
             )}
           </HeaderTitle>
-          <ToggleText>
+          
+          {collapsed && hasContent && (
+            <CollapsedIndicator $collapsed={collapsed}>
+              <span className="dot"></span>
+              <span className="dot"></span>
+              <span className="dot"></span>
+            </CollapsedIndicator>
+          )}
+          
+          {hasContent && (
+            <WordCount $collapsed={collapsed}>
+              {formattedCount}
+            </WordCount>
+          )}
+          
+          <ToggleText onClick={handleToggleCollapse}>
             {collapsed ? "展开" : "收起"} 
           </ToggleText>
-          <ToggleButton>
+          <ToggleButton 
+            onClick={handleToggleCollapse}
+            $collapsed={collapsed}
+          >
             {collapsed ? <FaChevronDown size={14} /> : <FaChevronUp size={14} />}
           </ToggleButton>
         </ThinkingHeader>

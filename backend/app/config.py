@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     DEEPSEEK_API_KEY: str = os.getenv("DEEPSEEK_API_KEY", "")
     DEEPSEEK_BASE_URL: str = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
     
+    # Server settings
+    PORT: int = int(os.getenv("PORT", "8000"))
+    
     # Model defaults
     DEFAULT_MODEL: str = "gpt-4o-mini"  # Default model, can be overridden
     

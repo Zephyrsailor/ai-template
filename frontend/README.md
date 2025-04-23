@@ -30,11 +30,11 @@ npm start
 
 ## 与后端连接
 
-确保后端服务器正在运行（默认在端口8001上）：
+确保后端服务器正在运行（默认在端口8000上）：
 
 ```bash
 cd ../backend
-python -m uvicorn app.main:app --reload --port 8001
+python -m uvicorn app.main:app --reload --port 8000
 ```
 
 ## 构建生产版本

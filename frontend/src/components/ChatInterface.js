@@ -134,7 +134,7 @@ const ChatInterface = ({ assistantName = 'AI聊天助手' }) => {
     
     try {
       // API端点 (根据需要更新)
-      const API_URL = 'http://localhost:8001/api/chat/stream';
+      const API_URL = 'http://localhost:8000/api/chat/stream';
       
       const response = await fetch(API_URL, {
         method: 'POST',

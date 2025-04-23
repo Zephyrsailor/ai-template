@@ -64,8 +64,8 @@ ai-template/
 
 ### 前置条件
 
-- Python >= 3.8
-- Node.js >= 14.0.0
+- Python >= 3.11
+- Node.js >= 18.0.0
 - npm 或 yarn
 
 ### 安装步骤
