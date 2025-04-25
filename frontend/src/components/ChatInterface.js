@@ -94,11 +94,17 @@ const ChatInterface = ({ assistantName = 'AI聊天助手' }) => {
     }
   };
 
-  const handleSendMessage = async (messageText) => {
+  const handleSendMessage = async (messageText, knowledgeBaseIds = []) => {
     if (!messageText.trim()) return;
     
-    // 添加用户消息
-    const userMessage = { role: 'user', content: messageText, timestamp: new Date().toISOString() };
+    // 添加用户消息，包含知识库信息
+    const userMessage = { 
+      role: 'user', 
+      content: messageText, 
+      timestamp: new Date().toISOString(),
+      // 保存使用的知识库IDs，方便展示
+      knowledgeBaseIds: knowledgeBaseIds.length > 0 ? knowledgeBaseIds : undefined
+    };
     setMessages(prev => [...prev, userMessage]);
     
     // 获取历史记录(不包括当前用户消息)
@@ -144,6 +150,7 @@ const ChatInterface = ({ assistantName = 'AI聊天助手' }) => {
         body: JSON.stringify({
           message: messageText,
           history: history,
+          knowledge_base_ids: knowledgeBaseIds // 添加知识库IDs参数
         }),
       });
       
@@ -169,7 +176,9 @@ const ChatInterface = ({ assistantName = 'AI聊天助手' }) => {
               role: 'assistant', 
               content: assistantResponseText,
               thinking: thinkingContent, // 保存关联的思考内容
-              timestamp: new Date().toISOString()
+              timestamp: new Date().toISOString(),
+              // 保存使用的知识库IDs
+              knowledgeBaseIds: userMessage.knowledgeBaseIds
             };
             return newMessages;
           } else {
@@ -178,7 +187,9 @@ const ChatInterface = ({ assistantName = 'AI聊天助手' }) => {
               role: 'assistant', 
               content: assistantResponseText,
               thinking: thinkingContent, // 保存关联的思考内容
-              timestamp: new Date().toISOString()
+              timestamp: new Date().toISOString(),
+              // 保存使用的知识库IDs
+              knowledgeBaseIds: userMessage.knowledgeBaseIds
             }];
           }
         });
@@ -197,6 +208,8 @@ const ChatInterface = ({ assistantName = 'AI聊天助手' }) => {
           
           for (const line of lines) {
             try {
+
+              console.log(line);
               const chunkData = JSON.parse(line);
               
               if (chunkData.type === 'reasoning' || chunkData.type === 'thinking') {
@@ -251,21 +264,19 @@ const ChatInterface = ({ assistantName = 'AI聊天助手' }) => {
 
   return (
     <ChatContainer>
-      <Header assistantName={assistantName} isThinking={isThinking} />
+      <Header title={assistantName} />
       <ChatMessages 
         messages={messages} 
         thinking={thinking}
         isThinking={isThinking}
-        messagesEndRef={messagesEndRef}
         scrollRef={scrollRef}
-        autoScroll={autoScroll}
-        setAutoScroll={setAutoScroll}
+        messagesEndRef={messagesEndRef}
       />
       <ChatInput 
         onSendMessage={handleSendMessage} 
         disabled={isLoading}
         onClearHistory={clearHistory}
-        hasMessages={messages.length > 0} 
+        hasMessages={messages.length > 0}
       />
     </ChatContainer>
   );

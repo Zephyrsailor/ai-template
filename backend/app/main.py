@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .routes import chat_router
+from .routes import chat_router, knowledge_router
 
 # --- FastAPI App ---
 app = FastAPI(title="AI Template API")
@@ -18,6 +18,12 @@ app.add_middleware(
 
 # --- Include Routers ---
 app.include_router(chat_router)
+
+# 确保知识库路由有/api前缀
+if knowledge_router.prefix.startswith("/knowledge"):
+    app.include_router(knowledge_router, prefix="/api")
+else:
+    app.include_router(knowledge_router)
 
 # --- Basic Root Endpoint ---
 @app.get("/")

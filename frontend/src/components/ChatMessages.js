@@ -197,6 +197,7 @@ const ChatMessages = ({
                 content={currentMessage.content}
                 isUser={true}
                 isError={false}
+                knowledgeBaseIds={currentMessage.knowledgeBaseIds}
               />
               <TimeStamp $isUser={true}>
                 {formatTime(currentMessage.timestamp)}
@@ -229,6 +230,7 @@ const ChatMessages = ({
                   content={currentMessage.content}
                   isUser={false}
                   isError={currentMessage.isError}
+                  knowledgeBaseIds={currentMessage.knowledgeBaseIds}
                 />
                 <TimeStamp $isUser={false}>
                   {formatTime(currentMessage.timestamp)}
