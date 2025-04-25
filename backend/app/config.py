@@ -1,58 +1,230 @@
+"""
+配置模块 - 提供应用配置和环境变量处理
+"""
 import os
-from pydantic_settings import BaseSettings
 from functools import lru_cache
-from dotenv import load_dotenv
-from typing import Optional
+from typing import Optional, Dict, Any
+import logging
 
-from .providers.openai import OpenAIProvider
+from pydantic_settings import BaseSettings
 
-# Load environment variables from .env file
-load_dotenv()
+# 设置日志记录器
+logger = logging.getLogger(__name__)
 
 class Settings(BaseSettings):
-    """Application settings"""
-    # Provider configuration
-    PROVIDER_TYPE: str = os.getenv("PROVIDER_TYPE", "openai")
-    OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
-    OPENAI_BASE_URL: Optional[str] = os.getenv("OPENAI_BASE_URL", None)
-    DEEPSEEK_API_KEY: str = os.getenv("DEEPSEEK_API_KEY", "")
-    DEEPSEEK_BASE_URL: str = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+    """应用配置"""
+    # 应用设置
+    APP_NAME: str = "AI助手"
+    APP_DESCRIPTION: str = "基于大语言模型的AI助手"
     
-    # Server settings
-    PORT: int = int(os.getenv("PORT", "8000"))
+    # API密钥
+    OPENAI_API_KEY: Optional[str] = None
+    ANTHROPIC_API_KEY: Optional[str] = None
+    AZURE_API_KEY: Optional[str] = None
+    DEEPSEEK_API_KEY: Optional[str] = None
     
-    # Model defaults
-    DEFAULT_MODEL: str = "gpt-4o-mini"  # Default model, can be overridden
+    # LLM配置
+    LLM_PROVIDER: str = "ollama"  # 可选值: "openai", "anthropic", "azure", "ollama", "local", "deepseek"
+    LLM_MODEL_NAME: str = "llama2"  # 默认模型名称
+    
+    # 嵌入模型配置
+    EMBEDDING_PROVIDER: str = "ollama"  # 可选值: "openai", "huggingface", "ollama", "local", "deepseek"
+    EMBEDDING_MODEL_NAME: str = "nomic-embed-text"  # 默认嵌入模型
+    
+    # 第三方服务配置
+    OLLAMA_BASE_URL: str = "http://localhost:11434"
+    OPENAI_BASE_URL: Optional[str] = None
+    DEEPSEEK_BASE_URL: Optional[str] = None
     
     class Config:
+        """Pydantic配置"""
         env_file = ".env"
+        env_file_encoding = "utf-8"
+        case_sensitive = True
+        extra = "ignore"  # 允许额外字段，避免验证错误
 
+    def get_llm_params(self) -> Dict[str, Any]:
+        """获取LLM模型的参数，基于当前配置"""
+        provider = self.LLM_PROVIDER.lower()
+        params = {"model": self.LLM_MODEL_NAME}
+        
+        if provider == "ollama":
+            params["base_url"] = self.OLLAMA_BASE_URL
+        elif provider == "openai" and self.OPENAI_BASE_URL:
+            params["api_base"] = self.OPENAI_BASE_URL
+        elif provider == "azure":
+            params["api_key"] = self.AZURE_API_KEY
+            # 对于Azure，使用engine而不是model
+            params["engine"] = params.pop("model")
+        elif provider == "deepseek":
+            params["api_key"] = self.DEEPSEEK_API_KEY
+            if self.DEEPSEEK_BASE_URL:
+                params["api_base"] = self.DEEPSEEK_BASE_URL
+            
+        return params
+        
+    def get_embedding_params(self) -> Dict[str, Any]:
+        """获取嵌入模型的参数，基于当前配置"""
+        provider = self.EMBEDDING_PROVIDER.lower()
+        params = {"model_name": self.EMBEDDING_MODEL_NAME}
+        
+        if provider == "ollama":
+            params["base_url"] = self.OLLAMA_BASE_URL
+        elif provider == "openai":
+            # OpenAI使用model而不是model_name
+            params["model"] = params.pop("model_name")
+            if self.OPENAI_BASE_URL:
+                params["api_base"] = self.OPENAI_BASE_URL
+        elif provider == "deepseek":
+            # DeepSeek使用OpenAI兼容接口
+            params["model"] = params.pop("model_name")
+            params["api_key"] = self.DEEPSEEK_API_KEY
+            if self.DEEPSEEK_BASE_URL:
+                params["api_base"] = self.DEEPSEEK_BASE_URL
+                
+        return params
 
 @lru_cache()
 def get_settings():
-    """Cached settings to avoid reloading .env file for each request"""
-    return Settings()
+    """获取应用配置单例"""
+    settings = Settings()
+    logger.info(f"加载配置: LLM提供商={settings.LLM_PROVIDER}, 嵌入模型提供商={settings.EMBEDDING_PROVIDER}")
+    return settings
 
+@lru_cache()
+def get_embedding_model():
+    """获取嵌入模型"""
+    settings = get_settings()
+    provider = settings.EMBEDDING_PROVIDER.lower()
+    params = settings.get_embedding_params()
+    
+    try:
+        logger.info(f"尝试初始化嵌入模型: 提供商={provider}, 模型={settings.EMBEDDING_MODEL_NAME}")
+        logger.info(f"嵌入模型参数: {params}")
+        
+        if provider == "ollama":
+            try:
+                logger.info("正在加载Ollama嵌入模型...")
+                from llama_index.embeddings.ollama import OllamaEmbedding
+                return OllamaEmbedding(**params)
+            except ImportError as e:
+                logger.error(f"Ollama嵌入模型导入失败: {e}")
+                logger.info("尝试fallback到本地嵌入模型...")
+                from llama_index.core.embeddings import resolve_embed_model
+                return resolve_embed_model("local")
+            
+        elif provider == "openai":
+            from llama_index.embeddings.openai import OpenAIEmbedding
+            return OpenAIEmbedding(**params)
+            
+        elif provider == "deepseek":
+            # DeepSeek使用OpenAI兼容接口
+            from llama_index.embeddings.openai import OpenAIEmbedding
+            logger.info("使用DeepSeek嵌入模型")
+            return OpenAIEmbedding(**params)
+            
+        elif provider == "huggingface":
+            try:
+                logger.info("正在加载HuggingFace嵌入模型...")
+                from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+                return HuggingFaceEmbedding(**params)
+            except ImportError as e:
+                logger.error(f"HuggingFace嵌入模型导入失败: {e}")
+                logger.info("尝试fallback到本地嵌入模型...")
+                from llama_index.core.embeddings import resolve_embed_model
+                return resolve_embed_model("local")
+            
+        elif provider == "local":
+            logger.info("使用本地嵌入模型")
+            from llama_index.core.embeddings import resolve_embed_model
+            return resolve_embed_model("local")
+            
+        else:
+            logger.warning(f"未知的嵌入模型提供商: {provider}，回退到本地模型")
+            from llama_index.core.embeddings import resolve_embed_model
+            return resolve_embed_model("local")
+            
+    except Exception as e:
+        logger.error(f"加载嵌入模型失败: {str(e)}，回退到本地模型")
+        from llama_index.core.embeddings import resolve_embed_model
+        return resolve_embed_model("local")
+
+@lru_cache()
+def get_llm_model():
+    """获取LLM模型"""
+    settings = get_settings()
+    provider = settings.LLM_PROVIDER.lower()
+    params = settings.get_llm_params()
+    
+    try:
+        logger.info(f"初始化LLM模型: 提供商={provider}, 模型={settings.LLM_MODEL_NAME}")
+        
+        if provider == "ollama":
+            from llama_index.llms.ollama import Ollama
+            return Ollama(**params)
+            
+        elif provider == "openai":
+            from llama_index.llms.openai import OpenAI
+            return OpenAI(**params)
+            
+        elif provider == "anthropic":
+            from llama_index.llms.anthropic import Anthropic
+            return Anthropic(**params)
+            
+        elif provider == "azure":
+            from llama_index.llms.azure_openai import AzureOpenAI
+            return AzureOpenAI(**params)
+            
+        elif provider == "deepseek":
+            # 处理DeepSeek API，使用OpenAI兼容接口
+            from llama_index.llms.openai import OpenAI
+            logger.info("使用DeepSeek LLM")
+            return OpenAI(**params)
+            
+        elif provider == "local":
+            from llama_index.llms import LlamaCPP
+            return LlamaCPP(model_path=settings.LLM_MODEL_NAME)
+            
+        else:
+            logger.warning(f"未知的LLM提供程序: {provider}，回退到Ollama")
+            from llama_index.llms.ollama import Ollama
+            return Ollama(model="llama2")
+            
+    except Exception as e:
+        logger.error(f"加载LLM模型失败: {str(e)}")
+        raise ValueError(f"无法加载LLM模型: {str(e)}")
 
 @lru_cache()
 def get_provider():
-    """Create and cache the LLM provider"""
+    """获取LLM提供商"""
     settings = get_settings()
     
-    if settings.PROVIDER_TYPE == "openai":
+    # 根据LLM_PROVIDER确定要使用的提供商
+    provider_type = settings.LLM_PROVIDER.lower()
+    
+    if provider_type == "openai":
+        from .providers.openai import OpenAIProvider
         api_key = settings.OPENAI_API_KEY
         base_url = settings.OPENAI_BASE_URL
-        settings.DEFAULT_MODEL = "gpt-4o-mini"
-    elif settings.PROVIDER_TYPE == "deepseek":
+        return OpenAIProvider(api_key=api_key, base_url=base_url)
+    elif provider_type == "deepseek":
+        from .providers.openai import OpenAIProvider  # DeepSeek使用OpenAI兼容接口
         api_key = settings.DEEPSEEK_API_KEY
         base_url = settings.DEEPSEEK_BASE_URL
-        settings.DEFAULT_MODEL = "deepseek-reasoner"
-    else:
-        raise ValueError(f"Unsupported PROVIDER_TYPE: {settings.PROVIDER_TYPE}")
-
-    if not api_key:
-        raise ValueError(f"API Key not found for provider: {settings.PROVIDER_TYPE}")
+        return OpenAIProvider(api_key=api_key, base_url=base_url)
+    elif provider_type == "azure":
+        from .providers.openai import OpenAIProvider  # 假设Azure也可以使用OpenAI兼容接口
+        api_key = settings.AZURE_API_KEY
+        # Azure需要特殊处理，这里只是示例
+        return OpenAIProvider(api_key=api_key, base_url=None)
+    elif provider_type == "ollama" or provider_type == "local":
+        # 对于Ollama，仍然使用包装器
+        from .providers.openai import OpenAIProvider
         
-    # Currently only OpenAI provider is implemented
-    # In a real app, you would instantiate different provider classes based on settings.PROVIDER_TYPE
-    return OpenAIProvider(api_key=api_key, base_url=base_url) 
+        # 使用本地模拟的API密钥
+        return OpenAIProvider(
+            api_key="sk-ollama-local", 
+            base_url=settings.OLLAMA_BASE_URL
+        )
+    else:
+        raise ValueError(f"不支持的LLM提供商类型: {provider_type}") 
