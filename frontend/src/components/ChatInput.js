@@ -1,14 +1,12 @@
 import React, { useState, useRef, useEffect } from 'react';
 import styled from 'styled-components';
 import { 
-  FaPaperPlane, 
   FaSpinner, 
-  FaImage, 
-  FaFileAlt, 
-  FaMicrophone, 
-  FaEllipsisH,
-  FaTrash
+  FaTrash,
+  FaGlobe
 } from 'react-icons/fa';
+import KnowledgeSelector from './KnowledgeSelector';
+import { MdSend } from 'react-icons/md';
 
 const InputContainer = styled.div`
   display: flex;
@@ -52,34 +50,36 @@ const ToolButton = styled.button`
     color: #4a6cf7;
     background-color: #f0f2f5;
   }
+  
+  &.active {
+    color: #4a6cf7;
+    background-color: #f0f5ff;
+  }
 `;
 
 const InputWrapper = styled.div`
   display: flex;
   position: relative;
+  align-items: center;
+  border: 1px solid #e6e6e6;
+  border-radius: 8px;
+  background-color: #f5f5f5;
 `;
 
 const TextareaWrapper = styled.div`
   flex: 1;
   position: relative;
-  border-radius: 24px;
-  background-color: #f0f2f5;
   transition: all 0.2s;
-  
-  &:focus-within {
-    box-shadow: 0 0 0 2px rgba(74, 108, 247, 0.2);
-  }
 `;
 
 const StyledTextarea = styled.textarea`
   width: 100%;
   padding: 14px 60px 14px 20px;
   border: none;
-  border-radius: 24px;
+  background-color: transparent;
   resize: none;
   font-family: inherit;
   font-size: 16px;
-  background-color: transparent;
   outline: none;
   max-height: 120px;
   min-height: 46px;
@@ -89,6 +89,37 @@ const StyledTextarea = styled.textarea`
   
   &::placeholder {
     color: #aaa;
+  }
+`;
+
+const ToolbarInner = styled.div`
+  display: flex;
+  align-items: center;
+  padding: 5px;
+  gap: 4px;
+  position: absolute;
+  left: 5px;
+  bottom: -40px;
+`;
+
+const InnerToolButton = styled.button`
+  background: none;
+  border: none;
+  font-size: 16px;
+  color: #666;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 4px;
+  padding: 0;
+  transition: all 0.2s;
+  
+  &:hover {
+    color: #4a6cf7;
+    background-color: #efefef;
   }
 `;
 
@@ -133,8 +164,9 @@ const CharacterCount = styled.div`
 
 const ChatInput = ({ onSendMessage, disabled, onClearHistory, hasMessages }) => {
   const [message, setMessage] = useState('');
+  const [selectedKbs, setSelectedKbs] = useState([]);
   const textareaRef = useRef(null);
-  const MAX_CHARS = 4000;
+  const maxLength = 4000;
   
   // 自动调整文本框高度
   useEffect(() => {
@@ -147,14 +179,15 @@ const ChatInput = ({ onSendMessage, disabled, onClearHistory, hasMessages }) => 
   
   const handleChange = (e) => {
     const value = e.target.value;
-    if (value.length <= MAX_CHARS) {
+    if (value.length <= maxLength) {
       setMessage(value);
     }
   };
   
   const handleSend = () => {
     if (message.trim() && !disabled) {
-      onSendMessage(message);
+      // 将选中的知识库ID传给onSendMessage
+      onSendMessage(message, selectedKbs);
       setMessage('');
     }
   };
@@ -166,30 +199,18 @@ const ChatInput = ({ onSendMessage, disabled, onClearHistory, hasMessages }) => 
     }
   };
   
-  const isNearLimit = message.length > MAX_CHARS * 0.8;
+  const isNearLimit = message.length > maxLength * 0.8;
   
   return (
     <InputContainer>
       <ToolbarContainer>
         <ToolsLeft>
-          <ToolButton title="上传图片">
-            <FaImage />
-          </ToolButton>
-          <ToolButton title="上传文件">
-            <FaFileAlt />
-          </ToolButton>
-          <ToolButton title="语音输入">
-            <FaMicrophone />
-          </ToolButton>
-          <ToolButton title="更多功能">
-            <FaEllipsisH />
-          </ToolButton>
         </ToolsLeft>
         
         <ToolsRight>
           {hasMessages && (
             <ToolButton 
-              title="清除历史记录" 
+              title="清空历史记录" 
               onClick={onClearHistory}
               style={{ color: '#d32f2f' }}
             >
@@ -206,16 +227,17 @@ const ChatInput = ({ onSendMessage, disabled, onClearHistory, hasMessages }) => 
             value={message}
             onChange={handleChange}
             onKeyDown={handleKeyDown}
-            placeholder="输入消息..."
+            placeholder="在这里输入消息..."
             disabled={disabled}
             rows={1}
           />
           {message.length > 0 && (
             <CharacterCount isNearLimit={isNearLimit}>
-              {message.length}/{MAX_CHARS}
+              {message.length}/{maxLength}
             </CharacterCount>
           )}
         </TextareaWrapper>
+        
         <SendButton 
           onClick={handleSend} 
           disabled={!message.trim() || disabled}
@@ -223,10 +245,20 @@ const ChatInput = ({ onSendMessage, disabled, onClearHistory, hasMessages }) => 
           {disabled ? (
             <FaSpinner className="icon-spin" />
           ) : (
-            <FaPaperPlane />
+            <MdSend />
           )}
         </SendButton>
       </InputWrapper>
+      
+      <ToolbarInner>
+        <KnowledgeSelector 
+          selectedKbs={selectedKbs}
+          onChange={setSelectedKbs}
+        />
+        <InnerToolButton title="互联网搜索">
+          <FaGlobe />
+        </InnerToolButton>
+      </ToolbarInner>
     </InputContainer>
   );
 };
