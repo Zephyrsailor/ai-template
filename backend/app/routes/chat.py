@@ -74,19 +74,23 @@ async def chat_stream_endpoint(request: ChatRequest,
             
             # 在回复结束后，如果使用了知识库，添加引用信息
             if knowledge_results:
-                # 构建引用标记
+                # 去重 - 使用(source, kb_name)作为唯一标识
+                unique_sources = set()
                 references = "\n\n参考来源:\n"
-                for i, result in enumerate(knowledge_results, 1):
+                
+                count = 1
+                for result in knowledge_results:
                     metadata = result.get("metadata", {})
                     source = metadata.get("source", "未知来源")
-                    
-                    # 获取知识库信息
                     kb_info = result.get("source_knowledge_base", {})
                     kb_name = kb_info.get("name", "未知知识库")
                     
-                    references += f"[{i}] {source} (知识库: {kb_name})\n"
+                    key = (source, kb_name)
+                    if key not in unique_sources:
+                        unique_sources.add(key)
+                        references += f"[{count}] {source} (知识库: {kb_name})\n"
+                        count += 1
                 
-                # 以JSON格式发送引用信息
                 yield json.dumps({"type": "content", "data": references}) + "\n"
 
         except Exception as e:

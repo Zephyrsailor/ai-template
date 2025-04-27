@@ -6,6 +6,7 @@ import logging
 import json
 import shutil
 import uuid
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Optional, Any, Set
@@ -20,6 +21,15 @@ import chromadb
 from ..config import get_settings, get_embedding_model
 
 logger = logging.getLogger(__name__)
+
+# 配置根日志记录器
+logging.basicConfig(
+    level=logging.DEBUG,  # 设置为最低级别，捕获所有日志
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout)  # 输出到控制台
+    ]
+)
 
 class KnowledgeService:
     """知识库服务，提供统一的知识库管理接口"""
@@ -174,23 +184,18 @@ class KnowledgeService:
             }
 
     def delete_knowledge_base(self, name: str) -> Dict[str, Any]:
-        """删除知识库
-        
-        Args:
-            name: 知识库名称
-            
-        Returns:
-            删除结果
-        """
+        """删除知识库"""
         # 检查知识库是否存在
         knowledge_base_info = next((kb for kb in self.knowledge_bases if kb["name"] == name), None)
         if not knowledge_base_info:
-            return {
-                "success": False,
-                "message": f"知识库 '{name}' 不存在"
-            }
+            return {"success": False, "message": f"知识库 '{name}' 不存在"}
         
         try:
+            # 删除向量存储
+            chroma_client = chromadb.PersistentClient(path=str(self.knowledge_dir / name / "chroma"))
+            if name in chroma_client.list_collections():
+                chroma_client.delete_collection(name)
+            
             # 删除知识库目录
             knowledge_base_path = self.get_knowledge_base_path(name)
             if knowledge_base_path.exists():
@@ -200,16 +205,10 @@ class KnowledgeService:
             self.knowledge_bases = [kb for kb in self.knowledge_bases if kb["name"] != name]
             self._save_knowledge_bases()
             
-            return {
-                "success": True,
-                "message": f"知识库 '{name}' 删除成功"
-            }
+            return {"success": True, "message": f"知识库 '{name}' 删除成功"}
         except Exception as e:
             logger.error(f"删除知识库失败: {str(e)}")
-            return {
-                "success": False,
-                "message": f"删除知识库失败: {str(e)}"
-            }
+            return {"success": False, "message": f"删除知识库失败: {str(e)}"}
 
     def list_knowledge_bases(self) -> Dict[str, Any]:
         """获取知识库列表
@@ -628,7 +627,7 @@ class KnowledgeService:
             raise ValueError(f"获取文件列表失败: {str(e)}")
 
     def delete_file(self, name: str, filename: str) -> Dict[str, Any]:
-        """从知识库中删除文件
+        """从知识库中删除文件及其向量化内容
         
         Args:
             name: 知识库名称
@@ -652,17 +651,45 @@ class KnowledgeService:
                     "success": False,
                     "message": f"文件 '{filename}' 不存在"
                 }
-                
+            
+            # 删除向量数据库中的相关向量
+            vector_dir = self.get_vectors_path(name)
+            if vector_dir.exists():
+                try:
+                    # 连接到Chroma数据库
+                    db = chromadb.PersistentClient(path=str(vector_dir))
+                    chroma_collection = db.get_collection("documents")
+                    
+                    # 删除与文件关联的向量 - 使用metadata.source字段过滤
+                    chroma_collection.delete(
+                        where={"source": filename}
+                    )
+                    logger.info(f"已从向量数据库中删除文件 '{filename}' 的向量")
+                except Exception as e:
+                    logger.error(f"删除向量数据失败: {str(e)}")
+                    # 即使向量删除失败，也继续删除文件
+            
+            # 删除物理文件
             file_path.unlink()
             
             # 更新知识库信息
             knowledge_base_info["file_count"] = max(0, knowledge_base_info.get("file_count", 1) - 1)
+            # 这里应该也更新document_count，但由于没有直接方法获取删除的文档数，
+            # 可以在删除后重新获取实际的文档数
+            try:
+                db = chromadb.PersistentClient(path=str(vector_dir))
+                coll = db.get_collection("documents")
+                knowledge_base_info["document_count"] = coll.count()
+            except:
+                # 如果获取失败，不更新document_count
+                pass
+            
             knowledge_base_info["last_updated"] = datetime.now().isoformat()
             self._save_knowledge_bases()
             
             return {
                 "success": True,
-                "message": f"文件 '{filename}' 已从知识库 '{name}' 中删除"
+                "message": f"文件 '{filename}' 及其向量数据已从知识库 '{name}' 中删除"
             }
         except Exception as e:
             logger.error(f"删除文件失败: {str(e)}")
