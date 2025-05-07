@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import styled from 'styled-components';
 import { FaUser, FaRobot } from 'react-icons/fa';
 import ThinkingBubble from './ThinkingBubble';
@@ -163,6 +163,21 @@ const ChatMessages = ({
   setAutoScroll
 }) => {
   const hasMessages = messages.length > 0;
+  const [lastUserMessageId, setLastUserMessageId] = useState(null);
+  
+  // 追踪最后一个用户消息的ID，用于准确定位当前思考内容
+  useEffect(() => {
+    if (messages.length > 0) {
+      // 遍历消息，找到最后一条用户消息
+      for (let i = messages.length - 1; i >= 0; i--) {
+        if (messages[i].role === 'user') {
+          // 使用索引和时间戳组合作为唯一标识
+          setLastUserMessageId(`user-${i}-${messages[i].timestamp}`);
+          break;
+        }
+      }
+    }
+  }, [messages]);
   
   // 重新排列消息，确保思考内容与AI回复视觉上作为一组
   const renderMessages = () => {
@@ -181,6 +196,7 @@ const ChatMessages = ({
     for (let i = 0; i < messages.length; i++) {
       const currentMessage = messages[i];
       const nextMessage = i < messages.length - 1 ? messages[i + 1] : null;
+      const currentMessageId = `${currentMessage.role}-${i}-${currentMessage.timestamp}`;
       
       if (currentMessage.role === 'user') {
         // 用户消息单独显示
@@ -205,6 +221,21 @@ const ChatMessages = ({
             </div>
           </MessageWrapper>
         );
+        
+        // 如果这是最后一条用户消息，且有thinking内容，则在此处显示思考
+        if (currentMessageId === lastUserMessageId && thinking && thinking.trim() && isThinking) {
+          messageElements.push(
+            <MessageGroup key={`thinking-after-${i}`}>
+              <ThinkingAlignedWrapper>
+                <ThinkingBubble
+                  content={thinking} 
+                  isThinking={isThinking} 
+                  isHistorical={false}
+                />
+              </ThinkingAlignedWrapper>
+            </MessageGroup>
+          );
+        }
       } else {
         // 助手消息，如果有思考内容则作为一组显示
         const hasThinking = currentMessage.thinking && currentMessage.thinking.trim();
@@ -231,6 +262,8 @@ const ChatMessages = ({
                   isUser={false}
                   isError={currentMessage.isError}
                   knowledgeBaseIds={currentMessage.knowledgeBaseIds}
+                  mcpServerIds={currentMessage.mcpServerIds}
+                  toolCalls={currentMessage.toolCalls || []}
                 />
                 <TimeStamp $isUser={false}>
                   {formatTime(currentMessage.timestamp)}
@@ -242,22 +275,6 @@ const ChatMessages = ({
         
         messageElements.push(assistantMessageGroup);
       }
-    }
-    
-    // 处理当前活动的思考内容（用户最后一条消息之后的思考）
-    const lastMessage = messages[messages.length - 1];
-    if (lastMessage && lastMessage.role === 'user' && thinking) {
-      messageElements.push(
-        <MessageGroup key="current-thinking-group">
-          <ThinkingAlignedWrapper>
-            <ThinkingBubble
-              content={thinking} 
-              isThinking={isThinking} 
-              isHistorical={false}
-            />
-          </ThinkingAlignedWrapper>
-        </MessageGroup>
-      );
     }
     
     return messageElements;

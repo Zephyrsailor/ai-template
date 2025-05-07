@@ -18,7 +18,7 @@ from llama_index.core.schema import TextNode
 from llama_index.vector_stores.chroma import ChromaVectorStore
 import chromadb
 
-from ..config import get_settings, get_embedding_model
+from app.core.config import get_settings, get_embedding_model
 
 logger = logging.getLogger(__name__)
 

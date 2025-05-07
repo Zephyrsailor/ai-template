@@ -1,7 +1,8 @@
 import React from 'react';
 import styled from 'styled-components';
 import MarkdownRenderer from './MarkdownRenderer';
-import { FaBook } from 'react-icons/fa';
+import ToolCallDisplay from './ToolCallDisplay';
+import { FaBook, FaTools } from 'react-icons/fa';
 
 const Bubble = styled.div.attrs(props => ({
   className: props.className
@@ -61,6 +62,23 @@ const KnowledgeLabel = styled.div`
   }
 `;
 
+// 工具调用标签
+const ToolLabel = styled.div`
+  display: inline-flex;
+  align-items: center;
+  background-color: ${props => props.isUser ? 'rgba(255, 255, 255, 0.2)' : 'rgba(74, 108, 247, 0.1)'};
+  color: ${props => props.isUser ? 'white' : '#4a6cf7'};
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  margin-bottom: 8px;
+  margin-right: 8px;
+  
+  svg {
+    margin-right: 4px;
+  }
+`;
+
 // 引用显示
 const ReferencesContainer = styled.div`
   margin-top: 15px;
@@ -79,12 +97,113 @@ const ReferenceItem = styled.div`
   margin-bottom: 3px;
 `;
 
-const MessageBubble = ({ content, isUser, isError, variant = "message", knowledgeBaseIds }) => {
+// 处理工具调用渲染的组件
+const MessageContent = ({ content, isUser, toolCalls = [] }) => {
+  // 解析内容，保留普通文本，将JSON代码块替换为工具调用组件
+  const parseContent = (content) => {
+    if (!content) return null;
+    
+    // 匹配```json...```格式的代码块
+    const codeBlockRegex = /```json\n([\s\S]*?)\n```/g;
+    const parts = [];
+    let lastIndex = 0;
+    let match;
+    
+    while ((match = codeBlockRegex.exec(content)) !== null) {
+      // 添加工具调用前的文本
+      if (match.index > lastIndex) {
+        parts.push(
+          <MarkdownRenderer
+            key={`text-${lastIndex}`}
+            content={content.substring(lastIndex, match.index)}
+            variant="message"
+            isUser={isUser}
+          />
+        );
+      }
+      
+      // 处理JSON代码块
+      try {
+        const jsonContent = match[1];
+        const data = JSON.parse(jsonContent);
+        
+        // 检查是否是工具调用
+        if (data.name || data.tool_name) {
+          // 使用ToolCallDisplay组件
+          parts.push(
+            <ToolCallDisplay 
+              key={`tool-${match.index}`} 
+              data={data} 
+              isUser={isUser} 
+            />
+          );
+        } else {
+          // 非工具调用JSON，正常显示
+          parts.push(
+            <MarkdownRenderer
+              key={`code-${match.index}`}
+              content={match[0]}
+              variant="message"
+              isUser={isUser}
+            />
+          );
+        }
+      } catch (e) {
+        // 解析失败，正常显示
+        parts.push(
+          <MarkdownRenderer
+            key={`code-${match.index}`}
+            content={match[0]}
+            variant="message"
+            isUser={isUser}
+          />
+        );
+      }
+      
+      lastIndex = match.index + match[0].length;
+    }
+    
+    // 添加剩余文本
+    if (lastIndex < content.length) {
+      parts.push(
+        <MarkdownRenderer
+          key={`text-end`}
+          content={content.substring(lastIndex)}
+          variant="message"
+          isUser={isUser}
+        />
+      );
+    }
+    
+    return parts;
+  };
+  
+  return isUser ? (
+    <MarkdownRenderer
+      content={content}
+      variant="message"
+      isUser={isUser}
+    />
+  ) : (
+    <>{parseContent(content)}</>
+  );
+};
+
+const MessageBubble = ({ 
+  content, 
+  isUser, 
+  isError, 
+  variant = "message", 
+  knowledgeBaseIds,
+  mcpServerIds,
+  toolCalls = []
+}) => {
   // 提取知识库引用
   const hasReferences = content && content.includes('参考来源:');
   let mainContent = content;
   let references = null;
   
+  // 从内容中提取引用
   if (hasReferences) {
     const parts = content.split('参考来源:');
     mainContent = parts[0];
@@ -95,38 +214,48 @@ const MessageBubble = ({ content, isUser, isError, variant = "message", knowledg
   
   return (
     <Bubble $isUser={isUser} $isError={isError}>
-      {/* 知识库标签，只在助手回复中显示 */}
-      {!isUser && knowledgeBaseIds && knowledgeBaseIds.length > 0 && (
-        <KnowledgeLabel isUser={isUser}>
-          <FaBook size={12} />
-          知识库引用
-        </KnowledgeLabel>
-      )}
+      {/* 知识库标签 */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+        {!isUser && knowledgeBaseIds && knowledgeBaseIds.length > 0 && (
+          <KnowledgeLabel isUser={isUser}>
+            <FaBook size={12} />
+            知识库引用
+          </KnowledgeLabel>
+        )}
+        
+        {/* MCP服务器标签 */}
+        {!isUser && mcpServerIds && mcpServerIds.length > 0 && (
+          <ToolLabel isUser={isUser}>
+            <FaTools size={12} />
+            工具服务
+          </ToolLabel>
+        )}
+      </div>
       
       {isUser ? (
         <UserContent>
-          <MarkdownRenderer
+          <MessageContent
             content={mainContent}
-            variant={variant}
             isUser={isUser}
           />
         </UserContent>
       ) : (
-        <MarkdownRenderer
-          content={mainContent}
-          variant={variant}
-          isUser={isUser}
-        />
-      )}
-      
-      {/* 显示引用 */}
-      {hasReferences && references && (
-        <ReferencesContainer isUser={isUser}>
-          <ReferencesTitle>参考来源:</ReferencesTitle>
-          {references.split('\n').filter(line => line.trim()).map((line, i) => (
-            <ReferenceItem key={i}>{line}</ReferenceItem>
-          ))}
-        </ReferencesContainer>
+        <>
+          {/* 使用内容处理组件，保持原始顺序 */}
+          <MessageContent
+            content={mainContent}
+            isUser={isUser}
+            toolCalls={toolCalls}
+          />
+          
+          {/* 显示引用 */}
+          {hasReferences && references && (
+            <ReferencesContainer isUser={isUser}>
+              <ReferencesTitle>参考来源:</ReferencesTitle>
+              <ReferenceItem>{references}</ReferenceItem>
+            </ReferencesContainer>
+          )}
+        </>
       )}
     </Bubble>
   );

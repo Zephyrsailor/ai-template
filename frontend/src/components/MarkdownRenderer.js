@@ -141,18 +141,48 @@ const ThinkingMarkdownContainer = styled(MarkdownContainer)`
   }
 `;
 
-const MarkdownRenderer = ({ content, variant = 'default', isUser = false }) => {
+const MarkdownRenderer = ({ 
+  content, 
+  variant = 'default', 
+  isUser = false,
+  codeBlockRenderer = null // 自定义代码块渲染器
+}) => {
   const Container = variant === 'message' 
     ? MessageMarkdownContainer 
     : variant === 'thinking' 
       ? ThinkingMarkdownContainer 
       : MarkdownContainer;
 
+  // 处理自定义代码块渲染
+  const components = {};
+  
+  if (codeBlockRenderer) {
+    components.code = ({ className, children, ...props }) => {
+      // 获取代码块语言
+      const match = /language-(\w+)/.exec(className || '');
+      const lang = match ? match[1] : '';
+      
+      // 使用自定义渲染器
+      const customRendered = codeBlockRenderer(lang, String(children), props.node?.position?.start?.line);
+      if (customRendered) {
+        return customRendered;
+      }
+      
+      // 默认渲染
+      return (
+        <pre className={className}>
+          <code {...props}>{children}</code>
+        </pre>
+      );
+    };
+  }
+
   return (
     <Container isUser={isUser}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[rehypeSanitize, rehypeHighlight]}
+        components={Object.keys(components).length > 0 ? components : undefined}
       >
         {content}
       </ReactMarkdown>

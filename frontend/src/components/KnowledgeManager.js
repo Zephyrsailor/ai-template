@@ -53,20 +53,17 @@ const KnowledgeManager = () => {
     setError(null);
     
     try {
-      const response = await axios.get('/api/knowledge/list');
-      if (response.data.success) {
+      const response = await axios.get('/api/knowledge');
+      if (response.data.code === 200) {
         // 使用新格式
         setKnowledgeBases(response.data.data || []);
-      } else if (response.data) {
-        // 兼容旧格式
-        setKnowledgeBases(response.data || []);
-      } else {
+      }  else {
         setKnowledgeBases([]);
       }
       
       if (selectedKnowledge) {
         // 如果已选择了一个知识库，更新它的信息
-        const knowledgeBases = response.data.success ? 
+        const knowledgeBases = response.data.code === 200 ? 
           (response.data.data || []) : 
           (response.data || []);
         
@@ -92,7 +89,7 @@ const KnowledgeManager = () => {
     
     try {
       const response = await axios.get(`/api/knowledge/${knowledgeName}/files`);
-      if (response.data.success) {
+      if (response.data.code === 200) {
         setFiles(response.data.data || []);
       } else {
         setError('加载文件列表失败：' + response.data.message);
@@ -126,12 +123,12 @@ const KnowledgeManager = () => {
     setError(null);
     
     try {
-      const response = await axios.post('/api/knowledge/create', {
+      const response = await axios.post('/api/knowledge', {
         name: newKnowledgeName.trim(),
         description: newKnowledgeDesc.trim()
       });
       
-      if (response.data.success) {
+      if (response.data.code === 200) {
         setSuccess('知识库创建成功');
         setNewKnowledgeName('');
         setNewKnowledgeDesc('');
@@ -179,7 +176,7 @@ const KnowledgeManager = () => {
           }
         );
         
-        if (response.data.success) {
+        if (response.data.code === 200) {
           setSuccess(`文件 ${files[0].name} 上传成功，正在处理...`);
         } else {
           setError('上传文件失败：' + response.data.message);
@@ -200,7 +197,7 @@ const KnowledgeManager = () => {
           }
         );
         
-        if (response.data.success) {
+        if (response.data.code === 200) {
           setSuccess(response.data.message);
         } else {
           setError('上传文件失败：' + response.data.message);
@@ -250,9 +247,9 @@ const KnowledgeManager = () => {
     setError(null);
     
     try {
-      const response = await axios.delete(`/api/knowledge/${itemToDelete.name}`);
+      const response = await axios.delete(`/api/knowledge/${itemToDelete.id}`);
       
-      if (response.data.success) {
+      if (response.data.code === 200) {
         setSuccess(`知识库 ${itemToDelete.name} 已删除`);
         if (selectedKnowledge && selectedKnowledge.name === itemToDelete.name) {
           setSelectedKnowledge(null);
@@ -279,10 +276,10 @@ const KnowledgeManager = () => {
     setError(null);
     
     try {
-      const response = await axios.delete(`/api/knowledge/${selectedKnowledge.name}/files/${itemToDelete.filename}`);
+      const response = await axios.delete(`/api/knowledge/${selectedKnowledge.name}/files/${itemToDelete.id}`);
       
-      if (response.data.success) {
-        setSuccess(`文件 ${itemToDelete.filename} 已删除`);
+      if (response.data.code === 200) {
+        setSuccess(`文件 ${itemToDelete.file_name} 已删除`);
         loadFiles(selectedKnowledge.name);
         loadKnowledgeBases();  // 更新知识库信息
       } else {
@@ -316,7 +313,7 @@ const KnowledgeManager = () => {
     try {
       const response = await axios.post(`/api/knowledge/${selectedKnowledge.name}/rebuild`);
       
-      if (response.data.success) {
+      if (response.data.code === 200) {
         setSuccess(response.data.message);
         loadKnowledgeBases();
       } else {
@@ -345,7 +342,7 @@ const KnowledgeManager = () => {
         top_k: topK
       });
       
-      if (response.data.success) {
+      if (response.data.code === 200) {
         const results = response.data.data || [];
         
         // 处理每个结果，确保分数正确格式化
@@ -587,10 +584,10 @@ const KnowledgeManager = () => {
                   </ListItem>
                 ) : (
                   files.map((file) => (
-                    <ListItem key={file.filename}>
+                    <ListItem key={file.id}>
                       <ListItemText 
-                        primary={file.filename} 
-                        secondary={`大小: ${formatFileSize(file.size)} | 更新: ${formatDate(file.last_modified)}`}
+                        primary={file.file_name} 
+                        secondary={`大小: ${formatFileSize(file.file_size)} | 更新: ${formatDate(file.created_at)}`}
                       />
                       <Chip 
                         size="small" 
@@ -849,7 +846,7 @@ const KnowledgeManager = () => {
               `确定要删除知识库 "${itemToDelete.name}" 吗？这将删除所有相关文件和索引，且无法恢复。`
             )}
             {deleteType === 'file' && itemToDelete && (
-              `确定要删除文件 "${itemToDelete.filename}" 吗？`
+              `确定要删除文件 "${itemToDelete.file_name}" 吗？`
             )}
           </DialogContentText>
         </DialogContent>

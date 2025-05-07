@@ -60,7 +60,7 @@ const HeaderIcon = styled.div`
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
   transition: all 0.3s ease;
   
-  ${({ $collapsed }) => $collapsed && `
+  ${({ $collapsed, $isThinking }) => $collapsed && $isThinking && `
     animation: pulse 2s infinite;
     
     @keyframes pulse {
@@ -148,9 +148,22 @@ const CollapsedIndicator = styled.div`
 const ThinkingContentWrapper = styled.div.attrs(props => ({
   className: props.className
 }))`
-  max-height: ${({ $collapsed }) => $collapsed ? '0' : '700px'};
+  max-height: ${({ $collapsed }) => $collapsed ? '0' : '500px'};
   overflow: hidden;
-  transition: max-height 0.3s ease-out;
+  transition: max-height 0.4s ease-out;
+  position: relative;
+  
+  &::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 30px;
+    background: ${({ $hasScroll }) => $hasScroll ? 'linear-gradient(to top, rgba(241, 243, 245, 0.9), rgba(241, 243, 245, 0))' : 'transparent'};
+    pointer-events: none;
+    display: ${({ $collapsed, $hasScroll }) => (!$collapsed && $hasScroll) ? 'block' : 'none'};
+  }
 `;
 
 const ThinkingContent = styled.div`
@@ -161,6 +174,26 @@ const ThinkingContent = styled.div`
   min-height: 60px;
   overflow-wrap: break-word;
   word-break: break-word;
+  overflow-y: auto;
+  max-height: 500px;
+  
+  &::-webkit-scrollbar {
+    width: 5px;
+  }
+  
+  &::-webkit-scrollbar-track {
+    background: #f1f1f1;
+    border-radius: 5px;
+  }
+  
+  &::-webkit-scrollbar-thumb {
+    background: #c0c0c0;
+    border-radius: 5px;
+  }
+  
+  &::-webkit-scrollbar-thumb:hover {
+    background: #a0a0a0;
+  }
   
   pre {
     white-space: pre-wrap;
@@ -171,6 +204,7 @@ const ThinkingContent = styled.div`
   @media (max-width: 768px) {
     padding: 12px;
     font-size: 13px;
+    max-height: 400px;
   }
 `;
 
@@ -210,48 +244,128 @@ const WordCount = styled.div`
   display: ${({ $collapsed }) => $collapsed ? 'block' : 'none'};
 `;
 
+// 添加查看全文按钮样式
+const ViewFullButton = styled.button`
+  display: block;
+  width: 100%;
+  padding: 8px;
+  text-align: center;
+  color: #4a6cf7;
+  background: #f8f9fa;
+  border: none;
+  border-top: 1px solid #e2e8f0;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  
+  &:hover {
+    background: #f0f4f8;
+  }
+`;
+
 const ThinkingBubble = ({ content, isThinking = true, isHistorical = false }) => {
-  // 用户控制的折叠状态
-  const [userCollapsed, setUserCollapsed] = useState(isHistorical);
-  // 实际折叠状态 (考虑用户操作和自动展开)
+  // 默认状态逻辑：
+  // - 历史思考默认折叠
+  // - 当前思考（正在进行中）默认展开
   const [collapsed, setCollapsed] = useState(isHistorical);
+  const [fullHeight, setFullHeight] = useState(false);
   const contentRef = useRef(null);
+  const prevThinkingRef = useRef(isThinking);
+  const contentUpdatedRef = useRef(false);
+  const lastContentUpdateRef = useRef(Date.now());
+  const [heartbeat, setHeartbeat] = useState(0);
+  const [hasScroll, setHasScroll] = useState(false);
   
-  // 首次渲染时，如果是历史思考内容则默认折叠
+  // 检测内容是否需要滚动
   useEffect(() => {
-    if (isHistorical) {
-      setUserCollapsed(true);
-      setCollapsed(true);
-    }
-  }, []);
-  
-  // 当内容更新时，仅在特定条件下更新折叠状态
-  useEffect(() => {
-    // 只有在没有用户干预的情况下才自动展开/折叠
-    // 当开始思考或内容更新时，展开显示（但不覆盖用户操作）
-    if (isThinking && content && content.length > 0 && collapsed) {
-      // 仅当用户没有手动收起时才自动展开
-      if (!userCollapsed) {
-        setCollapsed(false);
+    if (contentRef.current && !collapsed) {
+      const contentElement = contentRef.current.querySelector('div');
+      if (contentElement) {
+        setHasScroll(contentElement.scrollHeight > contentElement.clientHeight);
       }
+    } else {
+      setHasScroll(false);
+    }
+  }, [content, collapsed, fullHeight]);
+
+  // 思考过程中的心跳机制，确保长时间思考时也保持界面响应
+  useEffect(() => {
+    let heartbeatTimer;
+    
+    if (isThinking) {
+      // 每2秒触发一次心跳，以保持UI响应
+      heartbeatTimer = setInterval(() => {
+        setHeartbeat(prev => prev + 1);
+        
+        // 如果内容超过10秒未更新，确保用户能看到（防止气泡过早折叠）
+        const now = Date.now();
+        if (now - lastContentUpdateRef.current > 10000) {
+          setCollapsed(false);
+        }
+      }, 2000);
     }
     
-    // 思考完成且是历史内容时才折叠（不覆盖用户已手动展开的）
-    if (!isThinking && isHistorical && !collapsed) {
-      // 仅当用户没有手动展开时才自动折叠
-      if (userCollapsed) {
-        setCollapsed(true);
-      }
+    return () => {
+      if (heartbeatTimer) clearInterval(heartbeatTimer);
+    };
+  }, [isThinking]);
+  
+  // 内容变化时，记录最后更新时间
+  useEffect(() => {
+    if (content) {
+      lastContentUpdateRef.current = Date.now();
     }
-  }, [isThinking, isHistorical, content, userCollapsed]);
+  }, [content]);
+  
+  // 首次渲染或思考状态改变时的逻辑
+  useEffect(() => {
+    if (prevThinkingRef.current && !isThinking) {
+      // 从思考状态变为完成状态时，标记内容已更新
+      contentUpdatedRef.current = true;
+      setFullHeight(false); // 重置全高显示状态
+    }
+    prevThinkingRef.current = isThinking;
+  }, [isThinking]);
+  
+  // 内容更新时的处理逻辑
+  useEffect(() => {
+    // 如果内容为空，不做任何处理
+    if (!content || content.trim().length === 0) return;
+    
+    // 如果是正在思考中，始终保持展开
+    if (isThinking) {
+      setCollapsed(false);
+      
+      // 自动滚动到底部，以便用户看到最新内容
+      if (contentRef.current) {
+        const contentElement = contentRef.current.querySelector('div');
+        if (contentElement) {
+          contentElement.scrollTop = contentElement.scrollHeight;
+        }
+      }
+      return;
+    }
+    
+    // 历史思考内容刚从空内容变为有内容时，也允许自动展开一次
+    if (isHistorical && contentUpdatedRef.current) {
+      setCollapsed(false);
+      contentUpdatedRef.current = false;
+    }
+  }, [content, isThinking, isHistorical, heartbeat]);
   
   // 处理用户点击折叠/展开事件
   const handleToggleCollapse = (e) => {
     e.stopPropagation();
-    // 记录用户选择
-    setUserCollapsed(!userCollapsed);
-    // 实际设置折叠状态
     setCollapsed(!collapsed);
+    if (!collapsed) {
+      setFullHeight(false); // 折叠时重置全高显示状态
+    }
+  };
+  
+  // 处理显示全部内容
+  const handleViewFull = () => {
+    setFullHeight(true);
   };
   
   const headerText = isHistorical ? "思考（历史）" : "思考过程";
@@ -261,9 +375,18 @@ const ThinkingBubble = ({ content, isThinking = true, isHistorical = false }) =>
   
   // 计算内容字数
   const wordCount = displayContent ? displayContent.length : 0;
-  const formattedCount = wordCount > 1000 
+  const formattedCount = wordCount > 10000 
     ? `${Math.floor(wordCount/1000)}k+字符` 
-    : `${wordCount}字符`;
+    : wordCount > 1000 
+      ? `${(wordCount/1000).toFixed(1)}k字符` 
+      : `${wordCount}字符`;
+  
+  // 检测内容是否足够大，需要显示滚动提示
+  const isLargeContent = wordCount > 3000;
+  const isExtremelyLargeContent = wordCount > 8000;
+  
+  // 确定内容区域的样式
+  const contentStyle = fullHeight ? { maxHeight: 'none' } : {};
   
   return (
     <ThinkingWrapper $isThinking={isThinking}>
@@ -297,25 +420,31 @@ const ThinkingBubble = ({ content, isThinking = true, isHistorical = false }) =>
           {hasContent && (
             <WordCount $collapsed={collapsed}>
               {formattedCount}
+              {!collapsed && isLargeContent && !fullHeight && " (可滚动)"}
             </WordCount>
           )}
           
-          <ToggleText onClick={handleToggleCollapse}>
-            {collapsed ? "展开" : "收起"} 
-          </ToggleText>
-          <ToggleButton 
-            onClick={handleToggleCollapse}
-            $collapsed={collapsed}
-          >
-            {collapsed ? <FaChevronDown size={14} /> : <FaChevronUp size={14} />}
-          </ToggleButton>
+          {hasContent && !isThinking && (
+            <>
+              <ToggleText>
+                {collapsed ? "展开" : "收起"} 
+              </ToggleText>
+              <ToggleButton 
+                onClick={handleToggleCollapse}
+                $collapsed={collapsed}
+              >
+                {collapsed ? <FaChevronDown size={14} /> : <FaChevronUp size={14} />}
+              </ToggleButton>
+            </>
+          )}
         </ThinkingHeader>
         
         <ThinkingContentWrapper 
           $collapsed={collapsed}
+          $hasScroll={hasScroll && !fullHeight}
           ref={contentRef}
         >
-          <ThinkingContent>
+          <ThinkingContent style={contentStyle}>
             {hasContent ? (
               <MarkdownRenderer content={displayContent} variant="thinking" />
             ) : (
@@ -331,6 +460,13 @@ const ThinkingBubble = ({ content, isThinking = true, isHistorical = false }) =>
             )}
           </ThinkingContent>
         </ThinkingContentWrapper>
+        
+        {/* 对于特别长的内容，显示查看全文按钮 */}
+        {!collapsed && hasScroll && isExtremelyLargeContent && !fullHeight && (
+          <ViewFullButton onClick={handleViewFull}>
+            查看全部内容
+          </ViewFullButton>
+        )}
       </ThinkingContainer>
     </ThinkingWrapper>
   );

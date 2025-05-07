@@ -4,7 +4,8 @@ import ChatInterface from './components/ChatInterface';
 import Header from './components/Header';
 import Sidebar from './components/Sidebar';
 import KnowledgeManager from './components/KnowledgeManager';
-import { RiRobot2Fill, RiSettings4Line, RiHistoryLine, RiUserLine, RiBookLine } from 'react-icons/ri';
+import MCPManager from './components/MCPManager';
+import { RiRobot2Fill, RiSettings4Line, RiHistoryLine, RiUserLine, RiBookLine, RiTerminalBoxLine } from 'react-icons/ri';
 import GlobalStyles from './styles/GlobalStyles';
 
 const AppContainer = styled.div`
@@ -87,6 +88,7 @@ const STORAGE_KEY = 'ai_chat_history';
 const assistants = [
   { id: 'ai-chat', name: 'AI聊天助手', icon: <RiRobot2Fill size={24} /> },
   { id: 'knowledge', name: '知识库管理', icon: <RiBookLine size={24} /> },
+  { id: 'mcp', name: 'MCP服务器', icon: <RiTerminalBoxLine size={24} /> },
   { id: 'history', name: '历史记录', icon: <RiHistoryLine size={24} /> },
   { id: 'profile', name: '个人设置', icon: <RiUserLine size={24} /> },
   { id: 'settings', name: '系统设置', icon: <RiSettings4Line size={24} /> }
@@ -216,6 +218,8 @@ function App() {
             </HistoryListContainer>
           ) : activeAssistant.id === 'knowledge' ? (
             <KnowledgeManager />
+          ) : activeAssistant.id === 'mcp' ? (
+            <MCPManager />
           ) : (
             <div style={{ padding: '20px', textAlign: 'center' }}>
               {activeAssistant.id === 'profile' ? '个人设置' : '系统设置'} 功能待开发...

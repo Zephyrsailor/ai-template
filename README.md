@@ -177,6 +177,88 @@ MIT
 
 ---
 
+## 系统架构图
+
+### 服务端架构图
+
+```mermaid
+graph TD
+    ClientApps[Client Applications] -->|Connects via| TransportLayer[Transport Layer]
+
+    subgraph TransportOptions [Transport Layer]
+        direction TB
+        subgraph Mechanisms [Transport Mechanisms]
+            direction LR
+            TM_WS[WebSocket]
+            TM_STDIO[STDIO]
+            TM_HTTP_SSE[HTTP/SSE]
+        end
+        
+        subgraph Endpoints [Server Endpoints]
+            EP_WS[websocket_server]
+            EP_STDIO[stdio_server]
+            EP_SSE[SseServerTransport]
+        end
+
+        TM_WS --> EP_WS
+        TM_STDIO --> EP_STDIO
+        TM_HTTP_SSE --> EP_SSE
+    end
+    TransportLayer --> Mechanisms
+
+
+    ServerSession[ServerSession]
+    EP_WS --> ServerSession
+    EP_STDIO --> ServerSession
+    EP_SSE --> ServerSession
+
+    LowLevelServer[Server (low-level)]
+    ServerSession -->|Communicates with| LowLevelServer
+
+    subgraph ServerInternalLogic [Server Internal Logic and Components]
+        RequestHandlers[Request Handlers]
+        NotificationHandlers[Notification Handlers]
+        ToolManager[ToolManager]
+        ResourceManager[ResourceManager]
+        PromptManager[PromptManager]
+        FastMCP[FastMCP]
+        RequestContext[RequestContext]
+
+        LowLevelServer -->|Dispatches to| RequestHandlers
+        LowLevelServer -->|Dispatches to| NotificationHandlers
+        
+        LowLevelServer -->|Delegates to| ToolManager
+        LowLevelServer -->|Delegates to| ResourceManager
+        LowLevelServer -->|Delegates to| PromptManager
+
+        FastMCP -->|Manages| ToolManager
+        FastMCP -->|Manages| ResourceManager
+        FastMCP -->|Manages| PromptManager
+        
+        LowLevelServer -.->|Creates/Uses for Handlers| RequestContext
+        ResourceManager -->|Uses| RequestContext
+    end
+```
+
+### 请求处理流程图
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant ServerSession
+    participant Server
+    participant RequestHandler
+
+    Client->>ServerSession: Send request
+    ServerSession->>Server: Process message
+    Server-->>Server: Identify handler
+    Server-->>Server: Create request context
+    Server->>RequestHandler: Call handler with request params
+    RequestHandler-->>Server: Return result
+    Server->>ServerSession: Send response
+    ServerSession->>Client: Return response
+```
+
 ## 版本历史
 
 - **v1.1.0** - 添加知识库管理功能，支持文档上传与语义检索
@@ -185,64 +267,182 @@ MIT
 ## 代码架构
 
 ### 前端结构
-```
-frontend/
-├── public/          # 静态资源
-├── src/             # 源代码
-│   ├── components/  # 组件
-│   │   ├── ChatInterface.js     # 聊天界面
-│   │   ├── ChatMessages.js      # 消息历史
-│   │   ├── ThinkingBubble.js    # 思考气泡
-│   │   ├── MessageBubble.js     # 消息气泡
-│   │   ├── MarkdownRenderer.js  # Markdown渲染
-│   │   ├── KnowledgeManager.js  # 知识库管理
-│   │   └── Sidebar.js           # 侧边栏
-│   ├── App.js       # 应用入口
-│   ├── index.js     # 渲染入口
-│   └── theme.js     # 主题配置
-└── package.json     # 依赖配置
+```mermaid
+graph TD
+    Frontend["frontend/"]
+    Frontend --> Public["public/ (静态资源)"]
+    Frontend --> Src["src/ (源代码)"]
+    Frontend --> PackageJson["package.json (依赖配置)"]
+
+    Src --> Components["components/ (组件)"]
+    Src --> AppJs["App.js (应用入口)"]
+    Src --> IndexJs["index.js (渲染入口)"]
+    Src --> ThemeJs["theme.js (主题配置)"]
+
+    Components --> ChatInterface["ChatInterface.js (聊天界面)"]
+    Components --> ChatMessages["ChatMessages.js (消息历史)"]
+    Components --> ThinkingBubble["ThinkingBubble.js (思考气泡)"]
+    Components --> MessageBubble["MessageBubble.js (消息气泡)"]
+    Components --> MarkdownRenderer["MarkdownRenderer.js (Markdown渲染)"]
+    Components --> KnowledgeManager["KnowledgeManager.js (知识库管理)"]
+    Components --> Sidebar["Sidebar.js (侧边栏)"]
 ```
 
-### 后端结构
+### 后端整体架构
+```mermaid
+graph TD
+    subgraph Client [Client Application]
+        HTTPRequest[HTTP Request]
+    end
+
+    subgraph BackendApp [Backend FastAPI Application]
+        direction LR
+        FastAPI_App["FastAPI App (main.py)"]
+
+        subgraph CoreComponents [Core FastAPI & App Components]
+            direction TB
+            Middleware["Middleware (CORS, Error Handling)"]
+            DepInjection["Dependency Injection"]
+            AppConfig["App Configuration (core/config.py)"]
+        end
+        
+        APIRouter_Main["Main API Router (api/__init__.py)"]
+
+        FastAPI_App --> Middleware
+        FastAPI_App --> DepInjection
+        FastAPI_App --> AppConfig
+        FastAPI_App --> APIRouter_Main
+        
+        subgraph ModuleRouters [API Module Routers (api/routes/)]
+            direction TB
+            ChatRouter["Chat Router (chat.py)"]
+            KnowledgeRouter["Knowledge Router (knowledge.py)"]
+            MCPRouter["MCP Router (mcp.py)"]
+        end
+        APIRouter_Main --> ModuleRouters
+
+        subgraph Services [Application Services (services/)]
+            direction TB
+            ChatService_S["ChatService (chat.py)"]
+            KnowledgeService_S["KnowledgeService (knowledge.py)"]
+            MCPService_S["MCPService (mcp.py)"]
+        end
+        
+        ChatRouter --> ChatService_S
+        KnowledgeRouter --> KnowledgeService_S
+        MCPRouter --> MCPService_S
+
+        subgraph Libraries [Libraries & Data (lib/, data/)]
+            direction TB
+            LLMProviders["LLM Providers (lib/providers/)"]
+            KnowledgeLib["Knowledge Lib (lib/knowledge/)"]
+            MCPLib["MCP Lib (lib/mcp/)"]
+            KnowledgeDataStore["Knowledge Data (data/knowledge/)"]
+        end
+
+        ChatService_S --> LLMProviders
+        KnowledgeService_S --> KnowledgeLib
+        KnowledgeService_S --> KnowledgeDataStore
+        MCPService_S --> MCPLib
+        
+        AppConfig --> Services
+        AppConfig --> Libraries
+    end
+    
+    HTTPRequest --> FastAPI_App
 ```
-backend/
-├── app/                 # 应用代码
-│   ├── routes/          # API路由
-│   │   ├── chat.py      # 聊天API
-│   │   ├── health.py    # 健康检查API
-│   │   └── knowledge.py # 知识库API
-│   ├── providers/       # 服务提供者
-│   │   ├── base.py      # 基类
-│   │   └── openai.py    # OpenAI实现
-│   ├── knowledge/       # 知识库模块
-│   │   ├── service.py   # 知识库服务
-│   │   ├── chunking.py  # 文档分块
-│   │   └── config.py    # 知识库配置
-│   ├── data/            # 数据存储
-│   │   └── knowledge/   # 知识库数据
-│   ├── config.py        # 应用配置
-│   └── main.py          # 应用入口
-└── requirements.txt     # 依赖配置
+
+### 后端文件结构
+```mermaid
+graph TD
+    Backend["backend/"]
+    Backend --> App["app/ (应用代码)"]
+    Backend --> Requirements["requirements.txt (依赖配置)"]
+
+    App --> Routes["routes/ (API路由)"]
+    App --> Providers["providers/ (服务提供者)"]
+    App --> Knowledge["knowledge/ (知识库模块)"]
+    App --> Data["data/ (数据存储)"]
+    App --> ConfigPy["config.py (应用配置)"]
+    App --> MainPy["main.py (应用入口)"]
+
+    Routes --> ChatPy["chat.py (聊天API)"]
+    Routes --> HealthPy["health.py (健康检查API)"]
+    Routes --> KnowledgeApiPy["knowledge.py (知识库API)"]
+
+    Providers --> BasePy["base.py (基类)"]
+    Providers --> OpenaiPy["openai.py (OpenAI实现)"]
+
+    Knowledge --> KnowledgeServicePy["service.py (知识库服务)"]
+    Knowledge --> ChunkingPy["chunking.py (文档分块)"]
+    Knowledge --> KnowledgeConfigPy["config.py (知识库配置)"]
+    
+    Data --> KnowledgeData["knowledge/ (知识库数据)"]
 ```
 
 ### 知识库架构
+```mermaid
+graph TD
+    KnowledgeService["知识库服务 (KnowledgeService)"]
+
+    subgraph Initialization["初始化"]
+        direction LR
+        InitDir["目录设置 (创建知识库存储路径)"]
+        InitLoad["知识库加载 (加载已有知识库)"]
+    end
+    KnowledgeService --> Initialization
+
+    subgraph KBManagement["知识库管理"]
+        direction LR
+        CreateKB["创建知识库 (create_knowledge_base)"]
+        DeleteKB["删除知识库 (delete_knowledge_base)"]
+        ListKBs["获取知识库列表 (list_knowledge_bases)"]
+        GetKBDetail["获取知识库详情 (get_knowledge_base)"]
+    end
+    KnowledgeService --> KBManagement
+
+    subgraph DocManagement["文档管理"]
+        direction LR
+        UploadDoc["上传文档 (upload_file, upload_folder)"]
+        DeleteDoc["删除文档 (delete_file, delete_files)"]
+        ListDocs["获取文档列表 (list_files)"]
+        ProcessDoc["文档处理 (_process_document)"]
+    end
+    KnowledgeService --> DocManagement
+
+    subgraph VectorSearch["向量检索"]
+        direction LR
+        QueryText["文本查询 (query)"]
+        VectorStore["向量存储 (_create_or_get_index)"]
+        DocChunking["文档分块 (StructureAwareChunker)"]
+    end
+    KnowledgeService --> VectorSearch
 ```
-知识库服务（KnowledgeService）
-├── 初始化
-│   ├── 目录设置           # 创建知识库存储路径
-│   └── 知识库加载         # 加载已有知识库
-├── 知识库管理
-│   ├── 创建知识库         # create_knowledge_base
-│   ├── 删除知识库         # delete_knowledge_base
-│   ├── 获取知识库列表     # list_knowledge_bases
-│   └── 获取知识库详情     # get_knowledge_base
-├── 文档管理
-│   ├── 上传文档           # upload_file, upload_folder
-│   ├── 删除文档           # delete_file, delete_files
-│   ├── 获取文档列表       # list_files
-│   └── 文档处理           # _process_document
-└── 向量检索
-    ├── 文本查询           # query
-    ├── 向量存储           # _create_or_get_index
-    └── 文档分块           # StructureAwareChunker
+
+### mcp架构
+```mermaid
+graph TD
+    MCP["/mcp"]
+    MCP --> InitPy["__init__.py (主入口点，导出公共 API)"]
+    MCP --> HostPy["host.py (MCP主机类，对外提供统一接口)"]
+    MCP --> ConfigPy["config.py (配置提供器)"]
+    MCP --> ConnectionPy["connection.py (连接管理器)"]
+    MCP --> SessionPy["session.py (会话管理器)"]
+    MCP --> Managers["managers/"]
+    MCP --> Models["models/"]
+    MCP --> Utils["utils/"]
+
+    Managers --> MgrInitPy["__init__.py (导出所有管理器)"]
+    Managers --> MgrBasePy["base.py (基础管理器类)"]
+    Managers --> ToolPy["tool.py (工具管理器)"]
+    Managers --> PromptPy["prompt.py (提示管理器)"]
+    Managers --> ResourcePy["resource.py (资源管理器)"]
+
+    Models --> ModInitPy["__init__.py (导出所有数据模型)"]
+    Models --> NamespacedPy["namespaced.py (命名空间对象模型)"]
+    Models --> ModCachePy["cache.py (缓存模型)"]
+
+    Utils --> UtilInitPy["__init__.py (导出所有工具函数)"]
+    Utils --> LoggerPy["logger.py (日志工具)"]
+    Utils --> UtilCachePy["cache.py (缓存工具)"]
 ```

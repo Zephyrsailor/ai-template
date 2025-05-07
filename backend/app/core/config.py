@@ -35,7 +35,7 @@ class Settings(BaseSettings):
     OLLAMA_BASE_URL: str = "http://localhost:11434"
     OPENAI_BASE_URL: Optional[str] = None
     DEEPSEEK_BASE_URL: Optional[str] = None
-    
+
     class Config:
         """Pydantic配置"""
         env_file = ".env"
@@ -203,23 +203,23 @@ def get_provider():
     provider_type = settings.LLM_PROVIDER.lower()
     
     if provider_type == "openai":
-        from .providers.openai import OpenAIProvider
+        from ..lib.providers.openai import OpenAIProvider
         api_key = settings.OPENAI_API_KEY
         base_url = settings.OPENAI_BASE_URL
         return OpenAIProvider(api_key=api_key, base_url=base_url)
     elif provider_type == "deepseek":
-        from .providers.openai import OpenAIProvider  # DeepSeek使用OpenAI兼容接口
+        from ..lib.providers.openai import OpenAIProvider  # DeepSeek使用OpenAI兼容接口
         api_key = settings.DEEPSEEK_API_KEY
         base_url = settings.DEEPSEEK_BASE_URL
         return OpenAIProvider(api_key=api_key, base_url=base_url)
     elif provider_type == "azure":
-        from .providers.openai import OpenAIProvider  # 假设Azure也可以使用OpenAI兼容接口
+        from ..lib.providers.openai import OpenAIProvider  # 假设Azure也可以使用OpenAI兼容接口
         api_key = settings.AZURE_API_KEY
         # Azure需要特殊处理，这里只是示例
         return OpenAIProvider(api_key=api_key, base_url=None)
     elif provider_type == "ollama" or provider_type == "local":
         # 对于Ollama，仍然使用包装器
-        from .providers.openai import OpenAIProvider
+        from ..lib.providers.openai import OpenAIProvider
         
         # 使用本地模拟的API密钥
         return OpenAIProvider(

@@ -7,7 +7,7 @@ import {
 } from 'react-icons/fa';
 import KnowledgeSelector from './KnowledgeSelector';
 import { MdSend } from 'react-icons/md';
-
+import MCPServerSelector from './MCPServerSelector';
 const InputContainer = styled.div`
   display: flex;
   flex-direction: column;
@@ -165,6 +165,7 @@ const CharacterCount = styled.div`
 const ChatInput = ({ onSendMessage, disabled, onClearHistory, hasMessages }) => {
   const [message, setMessage] = useState('');
   const [selectedKbs, setSelectedKbs] = useState([]);
+  const [selectedServers, setSelectedServers] = useState([]);
   const textareaRef = useRef(null);
   const maxLength = 4000;
   
@@ -186,8 +187,8 @@ const ChatInput = ({ onSendMessage, disabled, onClearHistory, hasMessages }) => 
   
   const handleSend = () => {
     if (message.trim() && !disabled) {
-      // 将选中的知识库ID传给onSendMessage
-      onSendMessage(message, selectedKbs);
+      // 传递选中的知识库ID和MCP服务器ID
+      onSendMessage(message, selectedKbs, selectedServers);
       setMessage('');
     }
   };
@@ -258,6 +259,10 @@ const ChatInput = ({ onSendMessage, disabled, onClearHistory, hasMessages }) => 
         <InnerToolButton title="互联网搜索">
           <FaGlobe />
         </InnerToolButton>
+        <MCPServerSelector 
+          selectedServers={selectedServers}
+          onChange={setSelectedServers}
+        />
       </ToolbarInner>
     </InputContainer>
   );
