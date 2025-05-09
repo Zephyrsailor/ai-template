@@ -1,115 +1,69 @@
 import React from 'react';
-import styled from 'styled-components';
+import { AiOutlinePlus } from 'react-icons/ai';
+import { BiMessageRoundedDetail } from 'react-icons/bi';
 
-const SidebarContainer = styled.div`
-  width: 70px;
-  height: 100vh;
-  background: linear-gradient(to bottom, #4a6cf7, #5e3fd7);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding: 20px 0;
-  color: white;
-  box-shadow: 2px 0 5px rgba(0, 0, 0, 0.1);
-
-  @media (max-width: 768px) {
-    width: 60px;
-  }
-`;
-
-const Logo = styled.div`
-  width: 40px;
-  height: 40px;
-  border-radius: 10px;
-  background-color: white;
-  color: #4a6cf7;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  margin-bottom: 30px;
-  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+const Sidebar = ({ conversations = [], activeChatId, onSelectChat, onNewChat }) => {
+  // 过滤出有实际内容的会话（非空标题或有多条消息）
+  const hasRealConversations = conversations.some(chat => 
+    (chat.title && chat.title.trim() !== '') || 
+    (chat.messages && chat.messages.length > 1)
+  );
   
-  svg {
-    font-size: 24px;
-  }
-`;
-
-const AssistantsList = styled.div`
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  width: 100%;
-  gap: 8px;
-  flex: 1;
-  overflow-y: auto;
-  padding: 5px 0;
-`;
-
-const AssistantButton = styled.button.attrs(props => ({
-  className: props.className,
-  type: 'button'
-}))`
-  width: 46px;
-  height: 46px;
-  border-radius: 10px;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  background-color: ${({ $isActive }) => $isActive ? 'rgba(255, 255, 255, 0.2)' : 'transparent'};
-  color: white;
-  border: none;
-  cursor: pointer;
-  transition: all 0.2s;
-  position: relative;
-  
-  &:hover {
-    background-color: rgba(255, 255, 255, 0.15);
-  }
-  
-  &::after {
-    content: '';
-    position: absolute;
-    left: 0;
-    width: 3px;
-    height: ${({ $isActive }) => $isActive ? '20px' : '0'};
-    background-color: white;
-    border-radius: 0 2px 2px 0;
-    transition: height 0.2s;
-  }
-`;
-
-const StatusDot = styled.span`
-  position: absolute;
-  width: 8px;
-  height: 8px;
-  background-color: #4ade80;
-  border-radius: 50%;
-  top: 6px;
-  right: 6px;
-  border: 1px solid rgba(255, 255, 255, 0.8);
-`;
-
-const Sidebar = ({ assistants, activeAssistant, setActiveAssistant }) => {
   return (
-    <SidebarContainer>
-      <Logo>
-        <span>AI</span>
-      </Logo>
+    <aside className="w-60 h-full flex flex-col bg-white border-r border-gray-100 shadow-sm">
+      {/* New chat button */}
+      <div className="p-3">
+        <button
+          onClick={onNewChat}
+          className="w-full flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium text-gray-700 bg-gray-50 border border-gray-200 rounded-lg hover:bg-gray-100 transition-colors duration-200"
+        >
+          <AiOutlinePlus size={16} />
+          <span>新建会话</span>
+        </button>
+      </div>
       
-      <AssistantsList>
-        {assistants.map(assistant => (
-          <AssistantButton
-            key={assistant.id}
-            $isActive={activeAssistant.id === assistant.id}
-            onClick={() => setActiveAssistant(assistant)}
-            title={assistant.name}
-          >
-            {assistant.icon}
-            {assistant.id === 'ai-chat' && <StatusDot />}
-          </AssistantButton>
-        ))}
-      </AssistantsList>
-    </SidebarContainer>
+      {/* Conversation list - 只在有实际对话时显示 */}
+      <div className="flex-1 overflow-y-auto py-2">
+        {hasRealConversations && (
+          <div className="px-2 mb-1 text-xs font-medium text-gray-500 uppercase tracking-wider">历史会话</div>
+        )}
+        
+        <ul className="space-y-0.5 px-1.5">
+          {conversations.length > 0 ? (
+            conversations.map((chat) => (
+              <li key={chat.id}>
+                <button
+                  onClick={() => onSelectChat(chat.id)}
+                  className={`w-full text-left px-3 py-2 rounded-md text-sm transition-colors duration-200 flex items-center gap-2 ${
+                    activeChatId === chat.id
+                      ? 'bg-gray-100 text-gray-900 font-medium'
+                      : 'text-gray-700 hover:bg-gray-50'
+                  }`}
+                >
+                  <BiMessageRoundedDetail 
+                    size={16} 
+                    className={activeChatId === chat.id ? 'text-gray-700' : 'text-gray-400'} 
+                  />
+                  <span className="truncate">
+                    {/* 如果是当前会话且没有标题，显示为"新会话" */}
+                    {(chat.title && chat.title.trim()) || (activeChatId === chat.id ? '新会话' : '未命名会话')}
+                  </span>
+                </button>
+              </li>
+            ))
+          ) : (
+            <li className="px-3 py-2 text-sm text-gray-500 italic">暂无历史会话</li>
+          )}
+        </ul>
+      </div>
+      
+      {/* Footer */}
+      <div className="p-3 border-t border-gray-100">
+        <div className="text-xs text-gray-500 text-center">
+          AI 助手 © 2025
+        </div>
+      </div>
+    </aside>
   );
 };
 

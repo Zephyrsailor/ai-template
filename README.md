@@ -31,17 +31,28 @@
 ```
 ai-template/
 ├── frontend/                # 前端React应用
-│   ├── public/              # 静态资源
-│   └── src/                 # 源代码
-│       ├── components/      # 组件
-│       └── styles/          # 样式
+│   ├── public/              # 静态资源 (e.g., index.html)
+│   ├── src/                 # React源代码
+│   │   ├── api/             # API请求模块
+│   │   ├── components/      # UI组件
+│   │   ├── styles/          # 样式文件
+│   │   ├── App.js           # 应用主组件
+│   │   └── index.js         # 应用入口
+│   ├── package.json         # 前端依赖与脚本
+│   └── ...                  # 其他配置文件 (tailwind.config.js, postcss.config.js, etc.)
 └── backend/                 # Python后端应用
-    ├── app/                 # 应用代码
-    │   ├── main.py          # FastAPI 入口
-    │   ├── config.py        # 配置项
-    │   ├── routes           # 路由
-    │   └── providers/       # LLM服务提供者
-    └── requirements.txt     # Python依赖
+    ├── app/                 # FastAPI应用代码
+    │   ├── main.py          # FastAPI 应用入口
+    │   ├── api/             # API层 (路由: app/api/routes, 依赖注入: app/api/deps.py)
+    │   ├── core/            # 核心组件 (配置: app/core/config.py, 安全等)
+    │   ├── domain/          # 领域模型 (数据结构: app/domain/models, 模式: app/domain/schemas)
+    │   ├── lib/             # 核心库 (知识库: app/lib/knowledge, MCP: app/lib/mcp, LLM Providers: app/lib/providers)
+    │   ├── services/        # 业务服务逻辑
+    │   └── ...              # (如: data/, utils/)
+    ├── requirements.txt     # Python依赖
+    ├── run.py               # 应用启动脚本
+    ├── .env.example         # 环境变量示例
+    └── ...                  # 其他文件 (e.g. architecture.md)
 ```
 
 ## 组件说明
@@ -59,9 +70,12 @@ ai-template/
 ### 后端主要模块
 
 - **app/main.py**: FastAPI应用入口
-- **app/routes/**: API路由定义
-- **app/providers/**: LLM服务提供者实现
-- **app/knowledge/**: 知识库管理服务模块
+- **app/api/**: API层，包含路由 (`app/api/routes`) 和依赖 (`app/api/deps.py`)
+- **app/core/**: 核心组件，如配置 (`app/core/config.py`) 和安全模块
+- **app/services/**: 业务逻辑服务，如聊天服务 (`app/services/chat.py`) 和知识库服务 (`app/services/knowledge.py`)
+- **app/lib/knowledge/**: 知识库功能的核心实现
+- **app/lib/providers/**: LLM及其他外部服务提供者的适配层
+- **app/domain/**: 应用的数据结构，包括数据模型 (`app/domain/models`) 和校验模式 (`app/domain/schemas`)
 
 ## 快速开始
 
@@ -181,68 +195,3 @@ MIT
 
 - **v1.1.0** - 添加知识库管理功能，支持文档上传与语义检索
 - **v1.0.0** - 初始版本，包含基本聊天功能和思考状态
-
-## 代码架构
-
-### 前端结构
-```
-frontend/
-├── public/          # 静态资源
-├── src/             # 源代码
-│   ├── components/  # 组件
-│   │   ├── ChatInterface.js     # 聊天界面
-│   │   ├── ChatMessages.js      # 消息历史
-│   │   ├── ThinkingBubble.js    # 思考气泡
-│   │   ├── MessageBubble.js     # 消息气泡
-│   │   ├── MarkdownRenderer.js  # Markdown渲染
-│   │   ├── KnowledgeManager.js  # 知识库管理
-│   │   └── Sidebar.js           # 侧边栏
-│   ├── App.js       # 应用入口
-│   ├── index.js     # 渲染入口
-│   └── theme.js     # 主题配置
-└── package.json     # 依赖配置
-```
-
-### 后端结构
-```
-backend/
-├── app/                 # 应用代码
-│   ├── routes/          # API路由
-│   │   ├── chat.py      # 聊天API
-│   │   ├── health.py    # 健康检查API
-│   │   └── knowledge.py # 知识库API
-│   ├── providers/       # 服务提供者
-│   │   ├── base.py      # 基类
-│   │   └── openai.py    # OpenAI实现
-│   ├── knowledge/       # 知识库模块
-│   │   ├── service.py   # 知识库服务
-│   │   ├── chunking.py  # 文档分块
-│   │   └── config.py    # 知识库配置
-│   ├── data/            # 数据存储
-│   │   └── knowledge/   # 知识库数据
-│   ├── config.py        # 应用配置
-│   └── main.py          # 应用入口
-└── requirements.txt     # 依赖配置
-```
-
-### 知识库架构
-```
-知识库服务（KnowledgeService）
-├── 初始化
-│   ├── 目录设置           # 创建知识库存储路径
-│   └── 知识库加载         # 加载已有知识库
-├── 知识库管理
-│   ├── 创建知识库         # create_knowledge_base
-│   ├── 删除知识库         # delete_knowledge_base
-│   ├── 获取知识库列表     # list_knowledge_bases
-│   └── 获取知识库详情     # get_knowledge_base
-├── 文档管理
-│   ├── 上传文档           # upload_file, upload_folder
-│   ├── 删除文档           # delete_file, delete_files
-│   ├── 获取文档列表       # list_files
-│   └── 文档处理           # _process_document
-└── 向量检索
-    ├── 文本查询           # query
-    ├── 向量存储           # _create_or_get_index
-    └── 文档分块           # StructureAwareChunker
-```

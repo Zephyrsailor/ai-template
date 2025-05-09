@@ -112,22 +112,23 @@ const MarkdownContainer = styled.div`
 
 // 为聊天消息定制的样式
 const MessageMarkdownContainer = styled(MarkdownContainer)`
-  color: ${(props) => (props.isUser ? 'white' : 'inherit')};
+  color: ${(props) => (props.isUser ? '#0f172a' : 'inherit')};
 
   a {
-    color: ${(props) => (props.isUser ? '#fff' : '#4a6cf7')};
+    color: ${(props) => (props.isUser ? '#1e40af' : '#4a6cf7')};
   }
   
   code {
-    background-color: ${(props) => (props.isUser ? 'rgba(255, 255, 255, 0.2)' : 'rgba(0, 0, 0, 0.05)')};
+    background-color: ${(props) => (props.isUser ? 'rgba(0, 0, 0, 0.08)' : 'rgba(0, 0, 0, 0.05)')};
   }
   
   pre {
-    background-color: ${(props) => (props.isUser ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.05)')};
+    background-color: ${(props) => (props.isUser ? 'rgba(0, 0, 0, 0.05)' : 'rgba(0, 0, 0, 0.05)')};
   }
   
   blockquote {
-    border-left-color: ${(props) => (props.isUser ? 'rgba(255, 255, 255, 0.5)' : '#ddd')};
+    border-left-color: ${(props) => (props.isUser ? 'rgba(0, 0, 0, 0.3)' : '#ddd')};
+    color: ${(props) => (props.isUser ? '#1e293b' : '#555')};
   }
 `;
 
@@ -141,18 +142,48 @@ const ThinkingMarkdownContainer = styled(MarkdownContainer)`
   }
 `;
 
-const MarkdownRenderer = ({ content, variant = 'default', isUser = false }) => {
+const MarkdownRenderer = ({ 
+  content, 
+  variant = 'default', 
+  isUser = false,
+  codeBlockRenderer = null // 自定义代码块渲染器
+}) => {
   const Container = variant === 'message' 
     ? MessageMarkdownContainer 
     : variant === 'thinking' 
       ? ThinkingMarkdownContainer 
       : MarkdownContainer;
 
+  // 处理自定义代码块渲染
+  const components = {};
+  
+  if (codeBlockRenderer) {
+    components.code = ({ className, children, ...props }) => {
+      // 获取代码块语言
+      const match = /language-(\w+)/.exec(className || '');
+      const lang = match ? match[1] : '';
+      
+      // 使用自定义渲染器
+      const customRendered = codeBlockRenderer(lang, String(children), props.node?.position?.start?.line);
+      if (customRendered) {
+        return customRendered;
+      }
+      
+      // 默认渲染
+      return (
+        <pre className={className}>
+          <code {...props}>{children}</code>
+        </pre>
+      );
+    };
+  }
+
   return (
     <Container isUser={isUser}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[rehypeSanitize, rehypeHighlight]}
+        components={Object.keys(components).length > 0 ? components : undefined}
       >
         {content}
       </ReactMarkdown>

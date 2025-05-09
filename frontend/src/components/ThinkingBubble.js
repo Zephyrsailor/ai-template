@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import styled from 'styled-components';
-import { FaRobot, FaChevronDown, FaChevronUp, FaSpinner, FaBrain } from 'react-icons/fa';
+import { FaChevronDown, FaChevronUp } from 'react-icons/fa';
+import { HiOutlineSparkles } from 'react-icons/hi';
 import MarkdownRenderer from './MarkdownRenderer';
 
 const ThinkingWrapper = styled.div.attrs(props => ({
@@ -10,19 +11,27 @@ const ThinkingWrapper = styled.div.attrs(props => ({
   opacity: ${({ $isThinking }) => ($isThinking ? 0.98 : 1)};
   margin-bottom: 12px;
   transition: all 0.3s ease;
+  position: static;
 `;
 
 const ThinkingContainer = styled.div.attrs(props => ({
   className: props.className
 }))`
-  background-color: ${({ $isHistorical }) => $isHistorical ? '#f1f3f5' : '#f5f5f5'};
-  border: 1px solid ${({ $isHistorical }) => $isHistorical ? '#d1d9e6' : '#c8d3e6'};
-  border-radius: 16px;
+  background-color: ${({ $isHistorical, $isCompleted }) => 
+    $isCompleted ? '#f8fafc' : 
+    $isHistorical ? '#f8fafc' : '#f8fafc'};
+  border: 1px solid ${({ $isHistorical, $isCompleted }) => 
+    $isCompleted ? '#e2e8f0' : 
+    $isHistorical ? '#e2e8f0' : '#e2e8f0'};
+  border-radius: 14px;
   overflow: hidden;
   box-shadow: ${({ $collapsed }) => $collapsed 
-    ? '0 2px 5px rgba(0, 0, 0, 0.05)' 
-    : '0 3px 10px rgba(0, 0, 0, 0.08)'};
+    ? '0 1px 3px rgba(0, 0, 0, 0.03)' 
+    : '0 2px 5px rgba(0, 0, 0, 0.05)'};
   transition: all 0.3s ease;
+  margin-left: 0;
+  width: 100%;
+  position: relative;
 `;
 
 const ThinkingHeader = styled.div.attrs(props => ({
@@ -30,19 +39,19 @@ const ThinkingHeader = styled.div.attrs(props => ({
 }))`
   display: flex;
   align-items: center;
-  padding: ${({ $collapsed }) => $collapsed ? '10px 16px' : '14px 18px'};
-  background-color: ${({ $isHistorical, $collapsed }) => 
+  padding: ${({ $collapsed }) => $collapsed ? '12px 16px' : '14px 18px'};
+  background-color: ${({ $isHistorical, $collapsed, $isCompleted }) => 
     $collapsed 
-      ? ($isHistorical ? '#e9ecef' : '#edf2f7') 
-      : ($isHistorical ? '#e2e8f0' : '#e5e9f2')};
-  border-bottom: ${({ $collapsed }) => $collapsed ? 'none' : '1px solid #d1d9e6'};
+      ? ($isHistorical || $isCompleted ? '#f8fafc' : '#f1f5f9') 
+      : ($isHistorical || $isCompleted ? '#f1f5f9' : '#f1f5f9')};
+  border-bottom: ${({ $collapsed }) => $collapsed ? 'none' : '1px solid #e2e8f0'};
   cursor: pointer;
   user-select: none;
-  transition: all 0.2s ease;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
   
   &:hover {
-    background-color: ${({ $isHistorical }) => 
-      $isHistorical ? '#dee2e6' : '#e2e8f0'};
+    background-color: ${({ $isHistorical, $isCompleted }) => 
+      $isHistorical || $isCompleted ? '#f1f5f9' : '#e2e8f0'};
   }
 `;
 
@@ -50,7 +59,9 @@ const HeaderIcon = styled.div`
   width: 32px;
   height: 32px;
   border-radius: 50%;
-  background-color: ${({ $isThinking }) => $isThinking ? '#6366f1' : '#6c757d'};
+  background-color: ${({ $isThinking, $isCompleted }) => 
+    $isCompleted ? '#7c3aed' : 
+    $isThinking ? '#7c3aed' : '#64748b'};
   color: white;
   display: flex;
   justify-content: center;
@@ -60,13 +71,13 @@ const HeaderIcon = styled.div`
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
   transition: all 0.3s ease;
   
-  ${({ $collapsed }) => $collapsed && `
-    animation: pulse 2s infinite;
+  ${({ $collapsed, $isThinking }) => $collapsed && $isThinking && `
+    animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
     
     @keyframes pulse {
-      0% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.4); }
-      70% { box-shadow: 0 0 0 6px rgba(99, 102, 241, 0); }
-      100% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0); }
+      0% { box-shadow: 0 0 0 0 rgba(124, 58, 237, 0.5); }
+      70% { box-shadow: 0 0 0 8px rgba(124, 58, 237, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(124, 58, 237, 0); }
     }
   `}
 `;
@@ -74,9 +85,43 @@ const HeaderIcon = styled.div`
 const SpinnerIcon = styled.div`
   margin-left: 8px;
   color: #6c757d;
-  animation: spin 1.5s linear infinite;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+`;
+
+// 更优雅的加载动画
+const ThinkingProgress = styled.div`
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  position: relative;
   
-  @keyframes spin {
+  &:before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    border: 2px solid rgba(99, 102, 241, 0.15);
+  }
+  
+  &:after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    border: 2px solid transparent;
+    border-top-color: #6366f1;
+    animation: spinner 1.2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  }
+  
+  @keyframes spinner {
     0% { transform: rotate(0deg); }
     100% { transform: rotate(360deg); }
   }
@@ -85,7 +130,7 @@ const SpinnerIcon = styled.div`
 const HeaderTitle = styled.div`
   font-size: 15px;
   font-weight: 600;
-  color: #4a5568;
+  color: #475569;
   flex-grow: 1;
   display: flex;
   align-items: center;
@@ -96,26 +141,30 @@ const ToggleButton = styled.button.attrs(props => ({
   type: 'button',
   'aria-label': props.$collapsed ? '展开思考内容' : '收起思考内容'
 }))`
-  color: #4a6cf7;
+  color: #7c3aed;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  width: 30px;
+  height: 30px;
   border-radius: 50%;
-  background-color: rgba(74, 108, 247, 0.1);
+  background-color: rgba(124, 58, 237, 0.1);
   flex-shrink: 0;
-  transition: all 0.2s;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   border: none;
   outline: none;
   
   &:hover {
-    background-color: rgba(74, 108, 247, 0.2);
+    background-color: rgba(124, 58, 237, 0.15);
     transform: scale(1.05);
   }
   
   &:focus {
-    box-shadow: 0 0 0 2px rgba(74, 108, 247, 0.3);
+    box-shadow: 0 0 0 2px rgba(124, 58, 237, 0.2);
+  }
+
+  &:active {
+    transform: scale(0.98);
   }
 `;
 
@@ -124,7 +173,7 @@ const ToggleText = styled.span.attrs(props => ({
 }))`
   font-size: 14px;
   font-weight: 500;
-  color: #4a6cf7;
+  color: #7c3aed;
   margin-right: 8px;
 `;
 
@@ -132,14 +181,14 @@ const CollapsedIndicator = styled.div`
   display: ${({ $collapsed }) => $collapsed ? 'flex' : 'none'};
   align-items: center;
   margin-right: 12px;
-  color: #6366f1;
+  color: #7c3aed;
   gap: 4px;
   font-size: 13px;
   
   .dot {
     width: 4px;
     height: 4px;
-    background-color: #6366f1;
+    background-color: #7c3aed;
     border-radius: 50%;
     margin: 0 1px;
   }
@@ -148,29 +197,80 @@ const CollapsedIndicator = styled.div`
 const ThinkingContentWrapper = styled.div.attrs(props => ({
   className: props.className
 }))`
-  max-height: ${({ $collapsed }) => $collapsed ? '0' : '700px'};
+  max-height: ${({ $collapsed }) => $collapsed ? '0' : '80vh'};
   overflow: hidden;
-  transition: max-height 0.3s ease-out;
+  transition: max-height 0.4s ease-out;
+  position: relative;
+  
+  &::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 30px;
+    background: ${({ $hasScroll }) => $hasScroll ? 'linear-gradient(to top, rgba(241, 243, 245, 0.9), rgba(241, 243, 245, 0))' : 'transparent'};
+    pointer-events: none;
+    display: ${({ $collapsed, $hasScroll }) => (!$collapsed && $hasScroll) ? 'block' : 'none'};
+  }
 `;
 
 const ThinkingContent = styled.div`
   padding: 16px 18px;
-  color: #4a5568;
+  color: #374151;
   font-size: 14px;
-  line-height: 1.6;
+  line-height: 1.7;
   min-height: 60px;
   overflow-wrap: break-word;
   word-break: break-word;
+  overflow-y: auto;
+  max-height: ${props => props.$isHistorical ? '45vh' : '70vh'};
+  
+  &::-webkit-scrollbar {
+    width: 5px;
+  }
+  
+  &::-webkit-scrollbar-track {
+    background: #f5f5f5;
+    border-radius: 5px;
+  }
+  
+  &::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 5px;
+  }
+  
+  &::-webkit-scrollbar-thumb:hover {
+    background: #94a3b8;
+  }
   
   pre {
     white-space: pre-wrap;
     max-width: 100%;
     overflow-x: auto;
+    background-color: #f8fafc;
+    border-radius: 6px;
+    padding: 12px;
+    border: 1px solid #e2e8f0;
+    margin: 12px 0;
+  }
+  
+  code {
+    font-family: SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 13px;
+    background-color: #f1f5f9;
+    padding: 2px 4px;
+    border-radius: 3px;
+  }
+  
+  p {
+    margin-bottom: 10px;
   }
   
   @media (max-width: 768px) {
     padding: 12px;
     font-size: 13px;
+    max-height: ${props => props.$isHistorical ? '40vh' : '60vh'};
   }
 `;
 
@@ -210,99 +310,153 @@ const WordCount = styled.div`
   display: ${({ $collapsed }) => $collapsed ? 'block' : 'none'};
 `;
 
-const ThinkingBubble = ({ content, isThinking = true, isHistorical = false }) => {
-  // 用户控制的折叠状态
-  const [userCollapsed, setUserCollapsed] = useState(isHistorical);
-  // 实际折叠状态 (考虑用户操作和自动展开)
-  const [collapsed, setCollapsed] = useState(isHistorical);
+// 添加查看全文按钮样式
+const ViewFullButton = styled.button`
+  display: block;
+  width: 100%;
+  padding: 8px;
+  text-align: center;
+  color: #4a6cf7;
+  background: #f8f9fa;
+  border: none;
+  border-top: 1px solid #e2e8f0;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  
+  &:hover {
+    background: #f0f4f8;
+  }
+`;
+
+const ThinkingBubble = ({ 
+  thinking, 
+  isThinking = true, 
+  isHistorical = false,
+  isCompleted = false,
+  autoCollapse = false,
+  preserveContent = true
+}) => {
+  const [collapsed, setCollapsed] = useState(
+    isThinking ? false : autoCollapse || isHistorical || isCompleted
+  );
+  const [hasScroll, setHasScroll] = useState(false);
   const contentRef = useRef(null);
   
-  // 首次渲染时，如果是历史思考内容则默认折叠
+  // 检查内容是否需要滚动，并处理滚动位置
   useEffect(() => {
-    if (isHistorical) {
-      setUserCollapsed(true);
+    if (contentRef.current) {
+      const hasOverflow = contentRef.current.scrollHeight > contentRef.current.clientHeight;
+      setHasScroll(hasOverflow);
+      
+      // 当内容更新且处于思考状态时，自动滚动到底部查看最新内容
+      if (isThinking && !collapsed && hasOverflow) {
+        contentRef.current.scrollTop = contentRef.current.scrollHeight;
+      }
+    }
+  }, [thinking, collapsed, isThinking]);
+  
+  // 修改历史记录展示逻辑 - 历史记录默认保持折叠
+  useEffect(() => {
+    // 只有在正在思考状态下，组件才自动展开
+    if (isThinking) {
+      setCollapsed(false);
+    } else if ((isHistorical || isCompleted) && !preserveContent) {
+      // 历史记录默认折叠，除非特别指定preserveContent
       setCollapsed(true);
     }
-  }, []);
-  
-  // 当内容更新时，仅在特定条件下更新折叠状态
-  useEffect(() => {
-    // 只有在没有用户干预的情况下才自动展开/折叠
-    // 当开始思考或内容更新时，展开显示（但不覆盖用户操作）
-    if (isThinking && content && content.length > 0 && collapsed) {
-      // 仅当用户没有手动收起时才自动展开
-      if (!userCollapsed) {
-        setCollapsed(false);
-      }
-    }
-    
-    // 思考完成且是历史内容时才折叠（不覆盖用户已手动展开的）
-    if (!isThinking && isHistorical && !collapsed) {
-      // 仅当用户没有手动展开时才自动折叠
-      if (userCollapsed) {
-        setCollapsed(true);
-      }
-    }
-  }, [isThinking, isHistorical, content, userCollapsed]);
-  
-  // 处理用户点击折叠/展开事件
+  }, [isThinking, isHistorical, isCompleted, preserveContent]);
+
+  // 修改切换折叠状态的处理函数，增加滚动逻辑
   const handleToggleCollapse = (e) => {
     e.stopPropagation();
-    // 记录用户选择
-    setUserCollapsed(!userCollapsed);
-    // 实际设置折叠状态
-    setCollapsed(!collapsed);
+    
+    setCollapsed(prev => {
+      const newState = !prev;
+      
+      // 当展开时，在下一个渲染周期处理滚动
+      if (!newState) { // 从折叠到展开
+        setTimeout(() => {
+          if (contentRef.current) {
+            if (isThinking) {
+              // 如果正在思考，滚动到底部查看最新内容
+              contentRef.current.scrollTop = contentRef.current.scrollHeight;
+            } else {
+              // 否则滚动到顶部
+              contentRef.current.scrollTop = 0;
+            }
+          }
+        }, 100);
+      }
+      
+      return newState;
+    });
   };
   
-  const headerText = isHistorical ? "思考（历史）" : "思考过程";
-
-  const displayContent = content || "";
-  const hasContent = displayContent.trim().length > 0;
+  // 思考内容为空且不是正在思考状态，且不是历史记录和不是已完成状态，不显示组件
+  if (!thinking && !isThinking && !isHistorical && !isCompleted) {
+    return null;
+  }
   
-  // 计算内容字数
-  const wordCount = displayContent ? displayContent.length : 0;
-  const formattedCount = wordCount > 1000 
-    ? `${Math.floor(wordCount/1000)}k+字符` 
-    : `${wordCount}字符`;
+  // 如果是历史记录但内容为空，也不显示
+  if ((isHistorical || isCompleted) && (!thinking || thinking.trim() === '')) {
+    return null;
+  }
+
+  const getHeaderTitle = () => {
+    if (isHistorical) {
+      return '历史思考过程';
+    }
+    
+    if (isCompleted) {
+      return '思考已完成';
+    }
+    
+    if (isThinking) {
+      return '正在思考中...';
+    }
+    
+    return '思考过程';
+  };
   
   return (
     <ThinkingWrapper $isThinking={isThinking}>
-      <ThinkingContainer $isHistorical={isHistorical} $collapsed={collapsed}>
+      <ThinkingContainer 
+        $collapsed={collapsed} 
+        $isHistorical={isHistorical}
+        $isCompleted={isCompleted}
+      >
         <ThinkingHeader 
           onClick={handleToggleCollapse}
           $collapsed={collapsed}
           $isHistorical={isHistorical}
-          $isThinking={isThinking}
+          $isCompleted={isCompleted}
         >
-          <HeaderIcon $isThinking={isThinking} $collapsed={collapsed}>
-            {isThinking ? <FaBrain size={16} /> : <FaRobot size={16} />}
+          <HeaderIcon 
+            $isThinking={isThinking} 
+            $collapsed={collapsed}
+            $isCompleted={isCompleted}
+          >
+            <HiOutlineSparkles size={18} />
           </HeaderIcon>
+          
           <HeaderTitle>
-            {headerText}
-            {isThinking && (
+            {getHeaderTitle()}
+            {isThinking && !collapsed && (
               <SpinnerIcon>
-                <FaSpinner size={14} />
+                <ThinkingProgress />
               </SpinnerIcon>
+            )}
+            {collapsed && (
+              <CollapsedIndicator $collapsed={collapsed}>
+                <span className="dot"></span>
+                <span className="dot"></span>
+                <span className="dot"></span>
+              </CollapsedIndicator>
             )}
           </HeaderTitle>
           
-          {collapsed && hasContent && (
-            <CollapsedIndicator $collapsed={collapsed}>
-              <span className="dot"></span>
-              <span className="dot"></span>
-              <span className="dot"></span>
-            </CollapsedIndicator>
-          )}
-          
-          {hasContent && (
-            <WordCount $collapsed={collapsed}>
-              {formattedCount}
-            </WordCount>
-          )}
-          
-          <ToggleText onClick={handleToggleCollapse}>
-            {collapsed ? "展开" : "收起"} 
-          </ToggleText>
           <ToggleButton 
             onClick={handleToggleCollapse}
             $collapsed={collapsed}
@@ -312,20 +466,25 @@ const ThinkingBubble = ({ content, isThinking = true, isHistorical = false }) =>
         </ThinkingHeader>
         
         <ThinkingContentWrapper 
-          $collapsed={collapsed}
-          ref={contentRef}
+          $collapsed={collapsed} 
+          $hasScroll={hasScroll}
         >
-          <ThinkingContent>
-            {hasContent ? (
-              <MarkdownRenderer content={displayContent} variant="thinking" />
+          <ThinkingContent ref={contentRef} $isHistorical={isHistorical}>
+            {thinking ? (
+              <MarkdownRenderer 
+                content={thinking} 
+                variant="thinking" 
+              />
             ) : (
               <PlaceholderContent>
-                {isThinking && (
+                {isThinking ? (
                   <ThinkingDots>
                     <ThinkingDot delay={0} />
                     <ThinkingDot delay={0.2} />
                     <ThinkingDot delay={0.4} />
                   </ThinkingDots>
+                ) : (
+                  <span>暂无思考内容</span>
                 )}
               </PlaceholderContent>
             )}
