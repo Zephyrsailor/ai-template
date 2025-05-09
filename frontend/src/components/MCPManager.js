@@ -260,8 +260,8 @@ const MCPManager = () => {
     
     try {
       const response = await axios.post(`/api/mcp/servers/${server.id}/test`);
-      
-      if (response.data.success) {
+
+      if (response.data.data.success) {
         setSuccess('连接测试成功！');
       } else {
         setError('连接测试失败：' + response.data.message);

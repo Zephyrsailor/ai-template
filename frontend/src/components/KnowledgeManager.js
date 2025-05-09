@@ -1,21 +1,829 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
-import { 
-  Container, Box, Typography, TextField, Button, List, ListItem, 
-  ListItemText, ListItemSecondaryAction, IconButton, Divider, 
-  Paper, CircularProgress, Grid, Chip, Dialog, DialogTitle,
-  DialogContent, DialogContentText, DialogActions, Alert,
-  Card, CardContent, InputAdornment, Collapse, DialogProps,
-  Tooltip, Fab
-} from '@mui/material';
-import { 
-  Add, Delete, Upload, Refresh, Folder, Description,
-  Search, ExpandMore, ExpandLess, ContentCopy, Close,
-  InfoOutlined, ArrowBack 
-} from '@mui/icons-material';
+import styled from 'styled-components';
+import { CgSpinner } from 'react-icons/cg';
+import { FaTrash, FaSync, FaFile, FaFolder, FaSearch, FaPlus, FaCopy, FaTimes, FaFileAlt, FaFilePdf, FaFileWord, FaFileExcel, FaFileCode, FaFileImage, FaFileArchive, FaFileAudio, FaFileVideo, FaDatabase, FaTools, FaUpload, FaDownload, FaQuestion } from 'react-icons/fa';
+import { IoChevronDown, IoChevronUp } from 'react-icons/io5';
+import { HeaderIcon, TooltipContainer, Tooltip as HeaderTooltip } from './Header';
+
+// ===== Core Layout Components =====
+const KnowledgeContainer = styled.div`
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  color: #374151;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  max-width: ${props => props.isInSettings ? '100%' : '1400px'};
+  margin: 0 auto;
+  padding: 0 ${props => props.isInSettings ? '0' : '16px'};
+  min-height: ${props => props.isInSettings ? 'auto' : 'calc(100vh - 80px)'};
+  height: 100%;
+`;
+
+const Grid = styled.div`
+  display: grid;
+  grid-template-columns: 1fr 2fr;
+  gap: ${props => props.isInSettings ? '16px' : '24px'};
+  flex: 1;
+  min-height: ${props => props.isInSettings ? '550px' : '700px'};
+  
+  @media (max-width: 768px) {
+    grid-template-columns: 1fr;
+    gap: 20px;
+  }
+`;
+
+// ===== Card Design =====
+const Card = styled.div`
+  border: 1px solid #E5E7EB;
+  border-radius: 12px;
+  background-color: white;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  transition: box-shadow 0.2s ease;
+  
+  &:hover {
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.07);
+  }
+`;
+
+const CardHeader = styled.div`
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  border-bottom: 1px solid #F3F4F6;
+  background-color: #F9FAFB;
+`;
+
+const CardTitle = styled.h3`
+  font-size: 0.9rem;
+  font-weight: 600;
+  margin: 0;
+  color: #4B5563;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+`;
+
+const CardContent = styled.div`
+  padding: 0;
+  flex: 1;
+  overflow-y: auto;
+  height: 100%;
+  max-height: ${props => props.isInSettings ? 'calc(75vh - 180px)' : 'calc(90vh - 230px)'};
+  scrollbar-width: thin;
+  
+  &::-webkit-scrollbar {
+    width: 6px;
+  }
+  
+  &::-webkit-scrollbar-track {
+    background: #F9FAFB;
+  }
+  
+  &::-webkit-scrollbar-thumb {
+    background-color: #D1D5DB;
+    border-radius: 8px;
+  }
+`;
+
+// ===== Typography =====
+const Title = styled.h2`
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: #1F2937;
+  margin-bottom: 12px;
+`;
+
+const PageDescription = styled.p`
+  color: #6B7280;
+  font-size: 0.95rem;
+  margin-bottom: 24px;
+  line-height: 1.5;
+`;
+
+// ===== List Items =====
+const ListItem = styled.div`
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid #F3F4F6;
+  cursor: ${props => props.clickable ? 'pointer' : 'default'};
+  background-color: ${props => props.selected ? '#EFF6FF' : 'white'};
+  border-left: ${props => props.selected ? '3px solid #3B82F6' : '3px solid transparent'};
+  transition: all 0.15s ease;
+  
+  &:hover {
+    background-color: ${props => props.clickable ? (props.selected ? '#EFF6FF' : '#F9FAFB') : props.selected ? '#EFF6FF' : '#FFFFFF'};
+  }
+  
+  &:hover .delete-button {
+    opacity: 1;
+  }
+  
+  &:last-child {
+    border-bottom: none;
+  }
+`;
+
+const EmptyMessage = styled.div`
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  padding: 60px 20px;
+  color: #6B7280;
+  font-style: italic;
+  font-size: 0.95rem;
+  text-align: center;
+  gap: 16px;
+  
+  svg {
+    font-size: 32px;
+    opacity: 0.6;
+    color: #9CA3AF;
+  }
+`;
+
+// ===== File & KB Entry Styles =====
+const FileName = styled.div`
+  font-weight: 500;
+  font-size: 0.95rem;
+  color: #1F2937;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: 2px;
+  transition: color 0.15s ease;
+`;
+
+const FileDetails = styled.div`
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  
+  &:hover ${FileName} {
+    color: #2563EB;
+  }
+`;
+
+const FileInfo = styled.div`
+  font-size: 0.8rem;
+  color: #6B7280;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  line-height: 1.4;
+  padding-right: 8px;
+`;
+
+const FileEntry = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  
+  svg {
+    font-size: 18px;
+    flex-shrink: 0;
+    color: #6B7280;
+  }
+`;
+
+// ===== Status Indicators =====
+const FileStatus = styled.span`
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 12px;
+  background-color: #D1FAE5;
+  color: #065F46;
+  border: 1px solid #A7F3D0;
+  margin-right: 4px;
+  white-space: nowrap;
+  
+  ${props => props.status === 'processing' && `
+    background-color: #EFF6FF;
+    color: #1E40AF;
+    border-color: #BFDBFE;
+  `}
+  
+  ${props => props.status === 'error' && `
+    background-color: #FEF2F2;
+    color: #B91C1C;
+    border-color: #FEE2E2;
+  `}
+`;
+
+// ===== Buttons & Actions =====
+const ButtonGroup = styled.div`
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+`;
+
+const ActionButtonsContainer = styled.div`
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  
+  @media (max-width: 768px) {
+    flex-wrap: wrap;
+  }
+`;
+
+const ActionButton = styled.button`
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: ${props => props.iconOnly ? '8px' : '8px 12px'};
+  font-size: 14px;
+  font-weight: 500;
+  border-radius: 6px;
+  background-color: ${props => props.primary ? '#3B82F6' : 'white'};
+  color: ${props => props.primary ? 'white' : '#6B7280'};
+  border: 1px solid ${props => props.primary ? '#2563EB' : '#E5E7EB'};
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  
+  &:hover:not(:disabled) {
+    background-color: ${props => props.primary ? '#2563EB' : '#F9FAFB'};
+    border-color: ${props => props.primary ? '#1D4ED8' : '#D1D5DB'};
+  }
+  
+  &:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+  
+  svg {
+    ${props => props.iconOnly ? '' : 'margin-right: 6px;'}
+  }
+`;
+
+const DeleteButton = styled(ActionButton)`
+  color: #EF4444;
+  min-width: 28px;
+  height: 28px;
+  padding: 5px;
+  border-color: transparent;
+  opacity: 0;
+  transition: all 0.2s ease-in-out;
+  
+  &:hover {
+    background-color: #FEF2F2;
+    border-color: #FEE2E2;
+  }
+`;
+
+const Button = styled.button`
+  padding: 8px 16px;
+  font-size: 14px;
+  font-weight: 500;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: none;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  
+  &:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+  
+  ${props => props.primary ? `
+    background-color: #4f46e5;
+    color: white;
+    border: 1px solid #4338ca;
+    
+    &:hover:not(:disabled) {
+      background-color: #4338ca;
+    }
+    
+    &:active:not(:disabled) {
+      background-color: #3730a3;
+    }
+  ` : `
+    background-color: white;
+    color: #4B5563;
+    border: 1px solid #E5E7EB;
+    
+    &:hover:not(:disabled) {
+      background-color: #F9FAFB;
+      border-color: #D1D5DB;
+    }
+    
+    &:active:not(:disabled) {
+      background-color: #F3F4F6;
+    }
+  `}
+`;
+
+const CreateButton = styled(ActionButton)`
+  background-color: #f8fafc;
+  color: #64748b;
+  border-color: #e2e8f0;
+  font-weight: 500;
+  font-size: 0.75rem;
+  padding: 6px;
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  margin-left: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  
+  &:hover:not(:disabled) {
+    background-color: #f1f5f9;
+    border-color: #cbd5e1;
+    color: #334155;
+  }
+  
+  &:active:not(:disabled) {
+    background-color: #e2e8f0;
+  }
+  
+  svg {
+    font-size: 12px;
+  }
+`;
+
+// ===== Tooltips =====
+const ButtonTooltip = styled.div`
+  position: absolute;
+  top: -32px;
+  left: 50%;
+  transform: translateX(-50%);
+  background-color: #1F2937;
+  color: white;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  white-space: nowrap;
+  visibility: hidden;
+  opacity: 0;
+  transition: all 0.2s ease;
+  pointer-events: none;
+  z-index: 50;
+  
+  &:before {
+    content: '';
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    border-width: 4px;
+    border-style: solid;
+    border-color: #1F2937 transparent transparent transparent;
+  }
+`;
+
+const ActionButtonWrapper = styled.div`
+  position: relative;
+  display: inline-flex;
+  
+  &:hover ${ButtonTooltip} {
+    visibility: visible;
+    opacity: 1;
+  }
+`;
+
+// 上传按钮包装器 (特殊处理)
+const UploadButtonWrapper = styled(ActionButtonWrapper)`
+  margin-right: 4px;
+`;
+
+// ===== Dialog & Modal Styles =====
+const DialogOverlay = styled.div`
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(17, 24, 39, 0.5);
+  display: ${props => props.open ? 'flex' : 'none'};
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+  backdrop-filter: blur(2px);
+  padding: 16px;
+`;
+
+const DialogContainer = styled.div`
+  background-color: white;
+  border-radius: 12px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.12);
+  display: flex;
+  flex-direction: column;
+  width: ${props => props.fullWidth ? '90%' : '460px'};
+  max-width: ${props => props.maxWidth === 'lg' ? '950px' : '460px'};
+  min-height: ${props => props.minHeight || 'auto'};
+  max-height: ${props => props.maxHeight || '90vh'};
+  overflow: hidden;
+  
+  @media (max-width: 640px) {
+    width: 100%;
+    max-width: none;
+    max-height: 95vh;
+  }
+`;
+
+const DialogHeader = styled.div`
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  border-bottom: 1px solid #F3F4F6;
+  background-color: #F9FAFB;
+`;
+
+const DialogTitle = styled.h3`
+  font-size: 18px;
+  font-weight: 600;
+  margin: 0;
+  color: #1F2937;
+  display: flex;
+  align-items: center;
+
+  svg {
+    margin-right: 10px;
+    color: #4B5563;
+  }
+`;
+
+const DialogBody = styled.div`
+  padding: 20px;
+  overflow-y: auto;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+`;
+
+const DialogDescription = styled.p`
+  margin-top: 0;
+  margin-bottom: 16px;
+  color: #4B5563;
+  font-size: 14px;
+  line-height: 1.5;
+`;
+
+const DialogFooter = styled.div`
+  display: flex;
+  justify-content: flex-end;
+  padding: 16px 20px;
+  border-top: 1px solid #F3F4F6;
+  gap: 12px;
+`;
+
+const IconButton = styled.button`
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  border: none;
+  background-color: transparent;
+  color: #6B7280;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  
+  &:hover {
+    background-color: #F3F4F6;
+    color: #4B5563;
+  }
+  
+  &:active {
+    transform: scale(0.95);
+  }
+  
+  svg {
+    font-size: 16px;
+  }
+`;
+
+// ===== Form Components =====
+const TextField = styled.div`
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 16px;
+  
+  label {
+    font-size: 14px;
+    font-weight: 500;
+    margin-bottom: 6px;
+    color: #4B5563;
+  }
+  
+  input, textarea {
+    border: 1px solid #D1D5DB;
+    border-radius: 6px;
+    padding: 10px 12px;
+    font-size: 14px;
+    color: #1F2937;
+    transition: border-color 0.2s;
+    
+    &:focus {
+      outline: none;
+      border-color: #93C5FD;
+      box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.1);
+    }
+    
+    &::placeholder {
+      color: #9CA3AF;
+    }
+  }
+  
+  textarea {
+    resize: vertical;
+    min-height: 80px;
+  }
+`;
+
+const InputGroup = styled.div`
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+  
+  input {
+    flex: 1;
+    border: 1px solid #D1D5DB;
+    border-radius: 6px;
+    padding: 10px 12px;
+    font-size: 14px;
+    
+    &:focus {
+      outline: none;
+      border-color: #93C5FD;
+      box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.1);
+    }
+  }
+  
+  @media (max-width: 640px) {
+    flex-direction: column;
+  }
+`;
+
+// ===== Miscellaneous UI Components =====
+const Divider = styled.hr`
+  border: none;
+  border-top: 1px solid #F3F4F6;
+  margin: 16px 0;
+`;
+
+// ===== Message & Alert Components =====
+const AlertMessage = styled.div`
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-radius: 8px;
+  margin-bottom: 16px;
+  font-size: 14px;
+  background-color: ${props => props.type === 'error' ? '#FEF2F2' : '#ECFDF5'};
+  color: ${props => props.type === 'error' ? '#B91C1C' : '#065F46'};
+  border: 1px solid ${props => props.type === 'error' ? '#FEE2E2' : '#A7F3D0'};
+  
+  button {
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: currentColor;
+    padding: 2px;
+    display: flex;
+    align-items: center;
+    opacity: 0.7;
+    
+    &:hover {
+      opacity: 1;
+    }
+  }
+`;
+
+// ===== Loading Indicators =====
+const LoadingOverlay = styled.div`
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 200px;
+  width: 100%;
+`;
+
+const Spinner = styled(CgSpinner)`
+  font-size: 32px;
+  color: #6B7280;
+  animation: spin 1s linear infinite;
+  
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+`;
+
+// ===== Query Result Components =====
+const QueryResultList = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-top: 20px;
+`;
+
+const QueryResultItem = styled.div`
+  border: 1px solid #E5E7EB;
+  border-radius: 8px;
+  overflow: hidden;
+  background-color: white;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  transition: box-shadow 0.2s;
+  
+  &:hover {
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  }
+`;
+
+const QueryResultHeader = styled.div`
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 16px;
+  background-color: #F9FAFB;
+  border-bottom: 1px solid #F3F4F6;
+`;
+
+const ScoreLabel = styled.div`
+  display: flex;
+  align-items: center;
+  font-size: 12px;
+  font-weight: 500;
+  color: #4B5563;
+  gap: 4px;
+  
+  svg {
+    color: #10B981;
+  }
+`;
+
+const QueryResultContent = styled.div`
+  padding: 16px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: #1F2937;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 300px;
+  overflow-y: auto;
+`;
+
+const QueryResultFooter = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background-color: #F9FAFB;
+  border-top: 1px solid #F3F4F6;
+  font-size: 12px;
+  color: #6B7280;
+  
+  svg {
+    font-size: 14px;
+  }
+`;
+
+const EmptyQueryState = styled.div`
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 20px;
+  color: #9CA3AF;
+  gap: 16px;
+  text-align: center;
+  
+  svg {
+    font-size: 32px;
+    opacity: 0.4;
+  }
+`;
+
+// 获取文件类型图标
+const getFileIcon = (fileName) => {
+  if (!fileName) return <FaFileAlt style={{ color: '#9CA3AF' }} />;
+  
+  const extension = fileName.split('.').pop().toLowerCase();
+  
+  // Color map for different file types
+  const colorMap = {
+    pdf: '#EF4444',   // Red for PDFs
+    doc: '#3B82F6',   // Blue for Word docs
+    docx: '#3B82F6',
+    xls: '#10B981',   // Green for Excel
+    xlsx: '#10B981',
+    ppt: '#F59E0B',   // Amber for PowerPoint
+    pptx: '#F59E0B',
+    txt: '#6B7280',   // Gray for text files
+    csv: '#8B5CF6',   // Purple for data files
+    json: '#8B5CF6',
+    xml: '#8B5CF6',
+    html: '#EC4899',  // Pink for web files
+    htm: '#EC4899',
+    css: '#EC4899',
+    js: '#F59E0B',    // Amber for code files
+    py: '#F59E0B',
+    java: '#F59E0B',
+    cpp: '#F59E0B',
+    c: '#F59E0B',
+    zip: '#9CA3AF',   // Gray for archives
+    rar: '#9CA3AF',
+    tar: '#9CA3AF',
+    gz: '#9CA3AF',
+    jpg: '#EC4899',   // Pink for images
+    jpeg: '#EC4899',
+    png: '#EC4899',
+    gif: '#EC4899',
+    svg: '#EC4899',
+    mp3: '#8B5CF6',   // Purple for audio
+    wav: '#8B5CF6',
+    mp4: '#3B82F6',   // Blue for video
+    avi: '#3B82F6',
+    mov: '#3B82F6'
+  };
+  
+  // Get the color based on extension, default to gray
+  const iconColor = colorMap[extension] || '#9CA3AF';
+  
+  switch (extension) {
+    case 'pdf':
+      return <FaFilePdf style={{ color: iconColor }} />;
+    case 'doc':
+    case 'docx':
+      return <FaFileWord style={{ color: iconColor }} />;
+    case 'xls':
+    case 'xlsx':
+    case 'csv':
+      return <FaFileExcel style={{ color: iconColor }} />;
+    case 'js':
+    case 'py':
+    case 'java':
+    case 'cpp':
+    case 'c':
+    case 'html':
+    case 'css':
+    case 'json':
+    case 'xml':
+      return <FaFileCode style={{ color: iconColor }} />;
+    case 'png':
+    case 'jpg':
+    case 'jpeg':
+    case 'gif':
+    case 'svg':
+      return <FaFileImage style={{ color: iconColor }} />;
+    case 'zip':
+    case 'rar':
+    case 'tar':
+    case 'gz':
+      return <FaFileArchive style={{ color: iconColor }} />;
+    case 'mp3':
+    case 'wav':
+      return <FaFileAudio style={{ color: iconColor }} />;
+    case 'mp4':
+    case 'avi':
+    case 'mov':
+      return <FaFileVideo style={{ color: iconColor }} />;
+    default:
+      return <FaFileAlt style={{ color: iconColor }} />;
+  }
+};
+
+// 添加对话框按钮包装器
+const DialogActionButtonWrapper = styled(ActionButtonWrapper)`
+  ${ButtonTooltip} {
+    top: auto;
+    bottom: 38px;
+    &:before {
+      top: 100%;
+      bottom: auto;
+      border-color: #1F2937 transparent transparent transparent;
+    }
+  }
+`;
 
 // 知识库管理组件
-const KnowledgeManager = () => {
+const KnowledgeManager = ({ isInSettings = false }) => {
   // 状态管理
   const [knowledgeBases, setKnowledgeBases] = useState([]);
   const [selectedKnowledge, setSelectedKnowledge] = useState(null);
@@ -46,6 +854,19 @@ const KnowledgeManager = () => {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [itemToDelete, setItemToDelete] = useState(null);
   const [deleteType, setDeleteType] = useState(''); // 'knowledge' 或 'file'
+  
+  // 初始加载知识库列表
+  useEffect(() => {
+    loadKnowledgeBases();
+  }, []);
+
+  // 清除提示消息
+  useEffect(() => {
+    if (success) {
+      const timer = setTimeout(() => setSuccess(null), 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [success]);
 
   // 加载知识库列表
   const loadKnowledgeBases = async () => {
@@ -159,10 +980,8 @@ const KnowledgeManager = () => {
     setError(null);
     
     try {
-      // 创建FormData对象
       const formData = new FormData();
       
-      // 单个文件和多个文件使用不同的API
       if (files.length === 1) {
         formData.append('file', files[0]);
         
@@ -175,14 +994,14 @@ const KnowledgeManager = () => {
             }
           }
         );
+        console.log(response.data);
         
         if (response.data.code === 200) {
-          setSuccess(`文件 ${files[0].name} 上传成功，正在处理...`);
+          setSuccess('文件上传成功');
         } else {
           setError('上传文件失败：' + response.data.message);
         }
       } else {
-        // 多个文件
         for (let i = 0; i < files.length; i++) {
           formData.append('files', files[i]);
         }
@@ -198,13 +1017,12 @@ const KnowledgeManager = () => {
         );
         
         if (response.data.code === 200) {
-          setSuccess(response.data.message);
+          setSuccess(response.data.message || `成功上传 ${files.length} 个文件`);
         } else {
           setError('上传文件失败：' + response.data.message);
         }
       }
       
-      // 重新加载知识库和文件列表
       loadKnowledgeBases();
     } catch (err) {
       setError('上传文件失败：' + (err.response?.data?.detail || err.message));
@@ -213,30 +1031,26 @@ const KnowledgeManager = () => {
     }
   };
 
-  // 点击文件上传按钮
+  // 文件上传点击事件
   const handleFileUploadClick = () => {
-    fileInputRef.current.click();
+    fileInputRef.current?.click();
   };
 
-  // 文件选择变化
+  // 文件上传变更事件
   const handleFileChange = (e) => {
-    if (e.target.files && e.target.files.length > 0) {
-      uploadFiles(e.target.files);
-    }
+    uploadFiles(e.target.files);
+    e.target.value = null; // 清空input，允许上传相同文件
   };
 
-  // 文件夹上传处理
+  // 文件夹上传点击事件
   const handleFolderUploadClick = () => {
-    // 由于安全限制，HTML不能直接获取用户选择的文件夹路径
-    // 这里我们使用WebkitdirectoryProperty来上传文件夹中的所有文件
-    folderInputRef.current.click();
+    folderInputRef.current?.click();
   };
 
-  // 文件夹内容变更
+  // 文件夹上传变更事件
   const handleFolderChange = (e) => {
-    if (e.target.files && e.target.files.length > 0) {
-      uploadFiles(e.target.files);
-    }
+    uploadFiles(e.target.files);
+    e.target.value = null; // 清空input，允许上传相同文件夹
   };
 
   // 删除知识库
@@ -247,14 +1061,17 @@ const KnowledgeManager = () => {
     setError(null);
     
     try {
-      const response = await axios.delete(`/api/knowledge/${itemToDelete.id}`);
+      const response = await axios.delete(`/api/knowledge/${itemToDelete.name}`);
       
       if (response.data.code === 200) {
-        setSuccess(`知识库 ${itemToDelete.name} 已删除`);
+        setSuccess(`知识库 ${itemToDelete.name} 删除成功`);
+        
+        // 如果删除的是当前选择的知识库，清空选择
         if (selectedKnowledge && selectedKnowledge.name === itemToDelete.name) {
           setSelectedKnowledge(null);
           setFiles([]);
         }
+        
         loadKnowledgeBases();
       } else {
         setError('删除知识库失败：' + response.data.message);
@@ -263,8 +1080,6 @@ const KnowledgeManager = () => {
       setError('删除知识库失败：' + (err.response?.data?.detail || err.message));
     } finally {
       setLoading(false);
-      setDeleteDialogOpen(false);
-      setItemToDelete(null);
     }
   };
 
@@ -276,12 +1091,15 @@ const KnowledgeManager = () => {
     setError(null);
     
     try {
-      const response = await axios.delete(`/api/knowledge/${selectedKnowledge.name}/files/${itemToDelete.id}`);
+      const response = await axios.delete(`/api/knowledge/${selectedKnowledge.name}/files/${itemToDelete.file_name}`);
       
       if (response.data.code === 200) {
-        setSuccess(`文件 ${itemToDelete.file_name} 已删除`);
-        loadFiles(selectedKnowledge.name);
-        loadKnowledgeBases();  // 更新知识库信息
+        setSuccess(`文件 ${itemToDelete.file_name} 删除成功`);
+        // 移除本地列表中的文件
+        setFiles(files.filter(f => f.file_name !== itemToDelete.file_name));
+        
+        // 更新知识库信息
+        loadKnowledgeBases();
       } else {
         setError('删除文件失败：' + response.data.message);
       }
@@ -289,17 +1107,20 @@ const KnowledgeManager = () => {
       setError('删除文件失败：' + (err.response?.data?.detail || err.message));
     } finally {
       setLoading(false);
-      setDeleteDialogOpen(false);
       setItemToDelete(null);
     }
   };
 
-  // 确认删除对话框
-  const handleDeleteConfirm = () => {
-    if (deleteType === 'knowledge') {
-      deleteKnowledge();
-    } else if (deleteType === 'file') {
-      deleteFile();
+  // 处理删除确认
+  const handleDeleteConfirm = async () => {
+    try {
+      if (deleteType === 'knowledge') {
+        await deleteKnowledge();
+      } else if (deleteType === 'file') {
+        await deleteFile();
+      }
+    } finally {
+      setDeleteDialogOpen(false);
     }
   };
 
@@ -314,7 +1135,8 @@ const KnowledgeManager = () => {
       const response = await axios.post(`/api/knowledge/${selectedKnowledge.name}/rebuild`);
       
       if (response.data.code === 200) {
-        setSuccess(response.data.message);
+        setSuccess('索引重建成功');
+        // 更新知识库信息
         loadKnowledgeBases();
       } else {
         setError('重建索引失败：' + response.data.message);
@@ -325,16 +1147,22 @@ const KnowledgeManager = () => {
       setLoading(false);
     }
   };
-  
+
   // 查询知识库
   const queryKnowledge = async () => {
-    if (!selectedKnowledge || !queryText.trim()) {
-      setQueryError('请选择知识库并输入查询内容');
+    if (!selectedKnowledge) {
+      setQueryError('请先选择一个知识库');
+      return;
+    }
+    
+    if (!queryText.trim()) {
+      setQueryError('请输入查询内容');
       return;
     }
     
     setIsQuerying(true);
     setQueryError(null);
+    setQueryResults([]);
     
     try {
       const response = await axios.post(`/api/knowledge/${selectedKnowledge.name}/query`, {
@@ -345,23 +1173,10 @@ const KnowledgeManager = () => {
       if (response.data.code === 200) {
         const results = response.data.data || [];
         
-        // 处理每个结果，确保分数正确格式化
-        const formattedResults = results.map(result => {
-          // 使用服务器提供的score，后端已经处理好了
-          const score = typeof result.score === 'number' ? result.score : parseFloat(result.score || '0');
-          
-          return {
-            ...result,
-            score: isNaN(score) ? 0 : score,
-            // 保留原始分数用于显示
-            rawScore: result.raw_score || result.rawScore || result.score
-          };
-        });
-        
-        setQueryResults(formattedResults);
-        
-        if (formattedResults.length === 0) {
-          setQueryError('没有找到相关内容');
+        if (results.length === 0) {
+          setQueryError('没有找到匹配的结果，请尝试其他关键词');
+        } else {
+          setQueryResults(results);
         }
       } else {
         setQueryError('查询失败：' + response.data.message);
@@ -372,514 +1187,482 @@ const KnowledgeManager = () => {
       setIsQuerying(false);
     }
   };
-  
+
   // 打开查询对话框
   const openQueryDialog = () => {
+    if (!selectedKnowledge) {
+      setError('请先选择一个知识库');
+      return;
+    }
+    
     setQueryDialogOpen(true);
     setQueryResults([]);
     setQueryError(null);
   };
-  
+
   // 关闭查询对话框
   const closeQueryDialog = () => {
     setQueryDialogOpen(false);
   };
-  
-  // 复制文本到剪贴板
+
+  // 复制到剪贴板
   const copyToClipboard = (text) => {
-    navigator.clipboard.writeText(text);
-    setSuccess('已复制到剪贴板');
+    navigator.clipboard.writeText(text)
+      .then(() => {
+        setSuccess('已复制到剪贴板');
+      })
+      .catch((err) => {
+        setError('复制失败：' + err.message);
+      });
   };
 
-  // 首次加载
-  useEffect(() => {
-    loadKnowledgeBases();
-  }, []);
+  // 格式化文件大小
+  const formatFileSize = (bytes) => {
+    if (bytes === 0) return '0 B';
+    
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(1024));
+    
+    return (bytes / Math.pow(1024, i)).toFixed(2) + ' ' + sizes[i];
+  };
 
-  // 清除提示消息
-  useEffect(() => {
-    if (success) {
-      const timer = setTimeout(() => setSuccess(null), 5000);
-      return () => clearTimeout(timer);
-    }
-  }, [success]);
+  // 格式化日期
+  const formatDate = (dateString) => {
+    if (!dateString) return '未知';
+    
+    const date = new Date(dateString);
+    return date.toLocaleString('zh-CN', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  };
+
+  // Rendering functions
+  const renderEmptyMessage = (message, icon) => (
+    <EmptyMessage>
+      {icon}
+      <div>{message}</div>
+    </EmptyMessage>
+  );
 
   return (
-    <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
-      <Typography variant="h4" gutterBottom>
-        知识库管理
-      </Typography>
+    <KnowledgeContainer isInSettings={isInSettings}>
+      {!isInSettings && (
+        <>
+          <Title>知识库管理</Title>
+          <PageDescription>
+            管理您的知识库和文档。上传文件后系统会自动处理并建立索引，以便您可以通过搜索快速检索信息。
+          </PageDescription>
+        </>
+      )}
       
       {/* 错误和成功提示 */}
       {error && (
-        <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
+        <AlertMessage type="error">
           {error}
-        </Alert>
+          <button onClick={() => setError(null)}><FaTimes /></button>
+        </AlertMessage>
       )}
       
       {success && (
-        <Alert severity="success" sx={{ mb: 2 }} onClose={() => setSuccess(null)}>
+        <AlertMessage type="success">
           {success}
-        </Alert>
+          <button onClick={() => setSuccess(null)}><FaTimes /></button>
+        </AlertMessage>
       )}
       
-      <Grid container spacing={3}>
+      <Grid isInSettings={isInSettings}>
         {/* 知识库列表 */}
-        <Grid item xs={12} md={4}>
-          <Paper
-            sx={{
-              p: 2,
-              display: 'flex',
-              flexDirection: 'column',
-              height: 500,
-              overflow: 'auto'
-            }}
-          >
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-              <Typography variant="h6">知识库列表</Typography>
-              <Button 
-                startIcon={<Add />}
-                variant="contained"
-                color="primary"
-                size="small"
-                onClick={() => setCreateDialogOpen(true)}
-              >
-                创建
-              </Button>
-            </Box>
-            
-            <Divider sx={{ mb: 2 }} />
-            
+        <Card>
+          <CardHeader>
+            <CardTitle>知识库列表</CardTitle>
+            <CreateButton 
+              onClick={() => setCreateDialogOpen(true)}
+              aria-label="创建知识库"
+              title="创建知识库"
+            >
+              <FaPlus />
+            </CreateButton>
+          </CardHeader>
+          
+          <CardContent isInSettings={isInSettings}>
             {loading && knowledgeBases.length === 0 ? (
-              <Box sx={{ display: 'flex', justifyContent: 'center', p: 2 }}>
-                <CircularProgress />
-              </Box>
+              <LoadingOverlay>
+                <Spinner />
+              </LoadingOverlay>
+            ) : knowledgeBases.length === 0 ? (
+              renderEmptyMessage('暂无知识库，点击"创建"按钮开始添加', <FaDatabase />)
             ) : (
-              <List>
-                {knowledgeBases.length === 0 ? (
-                  <ListItem>
-                    <ListItemText primary="暂无知识库" />
-                  </ListItem>
-                ) : (
-                  knowledgeBases.map((kb) => (
-                    <ListItem 
-                      key={kb.name}
-                      button
-                      selected={selectedKnowledge && selectedKnowledge.name === kb.name}
-                      onClick={() => selectKnowledge(kb)}
-                    >
-                      <ListItemText 
-                        primary={kb.name} 
-                        secondary={`${kb.file_count}个文件 / ${kb.document_count}个文档块`}
-                      />
-                      <ListItemSecondaryAction>
-                        <IconButton 
-                          edge="end"
-                          onClick={() => {
-                            setItemToDelete(kb);
-                            setDeleteType('knowledge');
-                            setDeleteDialogOpen(true);
-                          }}
-                        >
-                          <Delete />
-                        </IconButton>
-                      </ListItemSecondaryAction>
-                    </ListItem>
-                  ))
-                )}
-              </List>
+              knowledgeBases.map((kb) => (
+                <ListItem 
+                  key={kb.id || kb.name}
+                  clickable
+                  selected={selectedKnowledge && selectedKnowledge.name === kb.name}
+                  onClick={() => selectKnowledge(kb)}
+                >
+                  <FileDetails>
+                    <FileName>{kb.name}</FileName>
+                    <FileInfo>
+                      {kb.file_count || 0}个文件 / {kb.document_count || 0}个文档块
+                      {kb.description && ` • ${kb.description}`}
+                    </FileInfo>
+                  </FileDetails>
+                  
+                  <div style={{ display: 'flex', alignItems: 'center' }}>
+                    <ActionButtonWrapper>
+                      <DeleteButton
+                        iconOnly
+                        danger
+                        className="delete-button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setItemToDelete(kb);
+                          setDeleteType('knowledge');
+                          setDeleteDialogOpen(true);
+                        }}
+                        aria-label="删除知识库"
+                      >
+                        <FaTrash />
+                      </DeleteButton>
+                      <ButtonTooltip>删除知识库</ButtonTooltip>
+                    </ActionButtonWrapper>
+                  </div>
+                </ListItem>
+              ))
             )}
-          </Paper>
-        </Grid>
+          </CardContent>
+        </Card>
         
-        {/* 文件列表 */}
-        <Grid item xs={12} md={8}>
-          <Paper
-            sx={{
-              p: 2,
-              display: 'flex',
-              flexDirection: 'column',
-              height: 500,
-              overflow: 'auto'
-            }}
-          >
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-              <Typography variant="h6">
-                {selectedKnowledge ? `${selectedKnowledge.name} 的文件` : '文件列表'}
-              </Typography>
-              <Box>
-                {selectedKnowledge && (
-                  <>
-                    <Button
-                      startIcon={<Upload />}
-                      variant="contained"
-                      color="primary"
-                      size="small"
-                      onClick={handleFileUploadClick}
-                      sx={{ mr: 1 }}
-                      disabled={uploadProgress}
-                    >
-                      上传文件
-                    </Button>
-                    <Button
-                      startIcon={<Folder />}
-                      variant="contained"
-                      color="primary"
-                      size="small"
-                      onClick={handleFolderUploadClick}
-                      sx={{ mr: 1 }}
-                      disabled={uploadProgress}
-                    >
-                      上传文件夹
-                    </Button>
-                    <Button
-                      startIcon={<Refresh />}
-                      variant="outlined"
-                      color="primary"
-                      size="small"
-                      onClick={rebuildIndex}
-                      disabled={loading || files.length === 0}
-                    >
-                      重建索引
-                    </Button>
-                    
-                    {/* 隐藏的文件输入 */}
-                    <input
-                      type="file"
-                      ref={fileInputRef}
-                      style={{ display: 'none' }}
-                      onChange={handleFileChange}
-                      multiple
-                    />
-                    
-                    {/* 隐藏的文件夹输入 */}
-                    <input
-                      type="file"
-                      ref={folderInputRef}
-                      style={{ display: 'none' }}
-                      onChange={handleFolderChange}
-                      directory=""
-                      webkitdirectory=""
-                    />
-                  </>
-                )}
-              </Box>
-            </Box>
+        {/* 文件列表与操作 */}
+        <Card>
+          <CardHeader>
+            <CardTitle>
+              {selectedKnowledge ? `${selectedKnowledge.name}的文件` : '文件列表'}
+            </CardTitle>
             
-            <Divider sx={{ mb: 2 }} />
-            
-            {!selectedKnowledge ? (
-              <Box sx={{ p: 2, textAlign: 'center' }}>
-                <Typography variant="body1">请选择一个知识库</Typography>
-              </Box>
-            ) : loading || uploadProgress ? (
-              <Box sx={{ display: 'flex', justifyContent: 'center', p: 2 }}>
-                <CircularProgress />
-              </Box>
-            ) : (
-              <List>
-                {files.length === 0 ? (
-                  <ListItem>
-                    <ListItemText primary="暂无文件" />
-                  </ListItem>
-                ) : (
-                  files.map((file) => (
-                    <ListItem key={file.id}>
-                      <ListItemText 
-                        primary={file.file_name} 
-                        secondary={`大小: ${formatFileSize(file.file_size)} | 更新: ${formatDate(file.created_at)}`}
-                      />
-                      <Chip 
-                        size="small" 
-                        label={file.status} 
-                        color="success" 
-                        sx={{ mr: 1 }}
-                      />
-                      <ListItemSecondaryAction>
-                        <IconButton 
-                          edge="end"
-                          onClick={() => {
-                            setItemToDelete(file);
-                            setDeleteType('file');
-                            setDeleteDialogOpen(true);
-                          }}
-                        >
-                          <Delete />
-                        </IconButton>
-                      </ListItemSecondaryAction>
-                    </ListItem>
-                  ))
-                )}
-              </List>
+            {selectedKnowledge && (
+              <ActionButtonsContainer>
+                <ActionButtonWrapper>
+                  <ActionButton 
+                    iconOnly
+                    onClick={openQueryDialog}
+                    aria-label="查询知识库"
+                  >
+                    <FaSearch />
+                  </ActionButton>
+                  <ButtonTooltip>查询知识库</ButtonTooltip>
+                </ActionButtonWrapper>
+                
+                <UploadButtonWrapper>
+                  <ActionButton 
+                    iconOnly
+                    onClick={handleFileUploadClick} 
+                    disabled={uploadProgress}
+                    aria-label="上传文件"
+                  >
+                    <FaUpload />
+                  </ActionButton>
+                  <ButtonTooltip>上传文件</ButtonTooltip>
+                </UploadButtonWrapper>
+                
+                <UploadButtonWrapper>
+                  <ActionButton 
+                    iconOnly
+                    onClick={handleFolderUploadClick} 
+                    disabled={uploadProgress}
+                    aria-label="上传文件夹"
+                  >
+                    <FaFolder />
+                  </ActionButton>
+                  <ButtonTooltip>上传文件夹</ButtonTooltip>
+                </UploadButtonWrapper>
+                
+                <UploadButtonWrapper>
+                  <ActionButton 
+                    iconOnly
+                    onClick={rebuildIndex} 
+                    disabled={loading || files.length === 0}
+                    aria-label="重建索引"
+                  >
+                    <FaDatabase />
+                  </ActionButton>
+                  <ButtonTooltip>重建向量索引</ButtonTooltip>
+                </UploadButtonWrapper>
+                
+                {/* 隐藏的文件输入 */}
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  style={{ display: 'none' }}
+                  onChange={handleFileChange}
+                  multiple
+                  aria-hidden="true"
+                />
+                
+                {/* 隐藏的文件夹输入 */}
+                <input
+                  type="file"
+                  ref={folderInputRef}
+                  style={{ display: 'none' }}
+                  onChange={handleFolderChange}
+                  directory=""
+                  webkitdirectory=""
+                  aria-hidden="true"
+                />
+              </ActionButtonsContainer>
             )}
-          </Paper>
-        </Grid>
+          </CardHeader>
+          
+          <CardContent isInSettings={isInSettings}>
+            {!selectedKnowledge ? (
+              renderEmptyMessage('请从左侧选择一个知识库', <FaQuestion />)
+            ) : loading || uploadProgress ? (
+              <LoadingOverlay>
+                <Spinner />
+              </LoadingOverlay>
+            ) : files.length === 0 ? (
+              renderEmptyMessage('该知识库暂无文件，请点击上传按钮添加文件', <FaUpload />)
+            ) : (
+              files.map((file) => (
+                <ListItem key={file.id || file.file_name}>
+                  <FileEntry>
+                    {getFileIcon(file.file_name)}
+                    <FileDetails>
+                      <FileName>{file.file_name}</FileName>
+                      <FileInfo>
+                        {formatFileSize(file.file_size)} • 更新于 {formatDate(file.created_at || file.updated_at)}
+                      </FileInfo>
+                    </FileDetails>
+                  </FileEntry>
+                  
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    <FileStatus status={file.status && file.status.toLowerCase()}>
+                      {file.status || '已量化'}
+                    </FileStatus>
+                    <ActionButtonWrapper>
+                      <DeleteButton 
+                        iconOnly
+                        danger
+                        className="delete-button"
+                        onClick={() => {
+                          setItemToDelete(file);
+                          setDeleteType('file');
+                          setDeleteDialogOpen(true);
+                        }}
+                        aria-label="删除文件"
+                      >
+                        <FaTrash />
+                      </DeleteButton>
+                      <ButtonTooltip>删除文件</ButtonTooltip>
+                    </ActionButtonWrapper>
+                  </div>
+                </ListItem>
+              ))
+            )}
+          </CardContent>
+        </Card>
       </Grid>
       
-      {/* 添加查询按钮 */}
-      {selectedKnowledge && (
-        <Tooltip title={`查询 ${selectedKnowledge.name} 知识库`} placement="left">
-          <Fab 
-            color="primary" 
-            sx={{ position: 'fixed', bottom: 30, right: 30 }}
-            onClick={openQueryDialog}
-          >
-            <Search />
-          </Fab>
-        </Tooltip>
-      )}
-      
       {/* 查询知识库对话框 */}
-      <Dialog
-        open={queryDialogOpen}
-        onClose={closeQueryDialog}
-        fullWidth
-        maxWidth="lg"
-        PaperProps={{
-          sx: {
-            minHeight: '80vh',
-            maxHeight: '90vh',
-            display: 'flex',
-            flexDirection: 'column'
-          }
-        }}
-      >
-        <DialogTitle sx={{ 
-          display: 'flex', 
-          justifyContent: 'space-between', 
-          alignItems: 'center',
-          borderBottom: '1px solid #e0e0e0',
-          pb: 2
-        }}>
-          <Box sx={{ display: 'flex', alignItems: 'center' }}>
-            <Search sx={{ mr: 1 }} />
-            查询知识库: {selectedKnowledge?.name}
-          </Box>
-          <IconButton onClick={closeQueryDialog} size="small">
-            <Close />
-          </IconButton>
-        </DialogTitle>
-        
-        <DialogContent sx={{ p: 2, flexGrow: 1, display: 'flex', flexDirection: 'column' }}>
-          <Box sx={{ mb: 2, mt: 2 }}>
-            <TextField
-              fullWidth
-              label="输入查询内容"
-              variant="outlined"
-              value={queryText}
-              onChange={(e) => setQueryText(e.target.value)}
-              disabled={isQuerying}
-              onKeyPress={(e) => {
-                if (e.key === 'Enter' && !isQuerying && queryText.trim()) {
-                  queryKnowledge();
-                }
-              }}
-              InputProps={{
-                endAdornment: (
-                  <InputAdornment position="end">
-                    <TextField
-                      type="number"
-                      label="结果数量"
-                      variant="outlined"
-                      value={topK}
-                      onChange={(e) => setTopK(Math.max(1, parseInt(e.target.value) || 1))}
-                      sx={{ width: '100px', mr: 1 }}
-                      size="small"
-                    />
-                    <Button
-                      variant="contained"
-                      color="primary"
-                      startIcon={<Search />}
-                      onClick={queryKnowledge}
-                      disabled={isQuerying || !queryText.trim()}
-                    >
-                      查询
-                    </Button>
-                  </InputAdornment>
-                )
-              }}
-            />
-          </Box>
+      <DialogOverlay open={queryDialogOpen} onClick={(e) => {
+        if (e.target === e.currentTarget) closeQueryDialog();
+      }}>
+        <DialogContainer fullWidth maxWidth="lg">
+          <DialogHeader>
+            <DialogTitle>
+              <FaSearch /> 查询知识库: {selectedKnowledge?.name}
+            </DialogTitle>
+            <IconButton onClick={closeQueryDialog}>
+              <FaTimes />
+            </IconButton>
+          </DialogHeader>
           
-          {queryError && (
-            <Alert severity="error" sx={{ mb: 2 }} onClose={() => setQueryError(null)}>
-              {queryError}
-            </Alert>
-          )}
-          
-          <Box sx={{ flexGrow: 1, overflow: 'auto', mt: 2 }}>
-            {isQuerying ? (
-              <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%' }}>
-                <CircularProgress />
-              </Box>
-            ) : (
-              queryResults.length > 0 ? (
-                <List sx={{ p: 0 }}>
-                  {queryResults.map((result, index) => (
-                    <Card key={index} variant="outlined" sx={{ mb: 2, backgroundColor: '#f9f9f9' }}>
-                      <CardContent>
-                        <Box sx={{ 
-                          display: 'flex', 
-                          justifyContent: 'space-between', 
-                          alignItems: 'center',
-                          mb: 1.5
-                        }}>
-                          <Box sx={{ 
-                            display: 'flex', 
-                            alignItems: 'center',
-                            backgroundColor: '#5cb85c', 
-                            color: 'white',
-                            px: 1.5,
-                            py: 0.5,
-                            borderRadius: 1,
-                            fontSize: '0.75rem',
-                            fontWeight: 500
-                          }}>
-                            Score: {Math.max(1, Math.round((result.score || 0) * 100))}%
-                          </Box>
-                          <Tooltip title="复制到剪贴板">
-                            <IconButton 
-                              size="small" 
-                              onClick={() => copyToClipboard(result.document)}
-                            >
-                              <ContentCopy fontSize="small" />
-                            </IconButton>
-                          </Tooltip>
-                        </Box>
-                        <Divider sx={{ mb: 1 }} />
-                        <Typography 
-                          variant="body2" 
-                          sx={{ 
-                            whiteSpace: 'pre-wrap', 
-                            overflowWrap: 'break-word',
-                            maxHeight: '300px',
-                            overflow: 'auto',
-                            p: 1,
-                            backgroundColor: '#ffffff',
-                            borderRadius: 1,
-                            border: '1px solid #eeeeee'
-                          }}
-                        >
-                          {result.document}
-                        </Typography>
-                        {result.metadata && Object.keys(result.metadata).length > 0 && (
-                          <>
-                            <Divider sx={{ my: 1 }} />
-                            <Typography 
-                              variant="caption" 
-                              color="text.secondary"
-                              sx={{ display: 'flex', alignItems: 'center' }}
-                            >
-                              <Description fontSize="small" sx={{ mr: 0.5, fontSize: '1rem' }} />
-                              来源: {result.metadata.source || '未知'}
-                            </Typography>
-                          </>
-                        )}
-                      </CardContent>
-                    </Card>
-                  ))}
-                </List>
-              ) : (
-                queryText.trim() && !queryError && (
-                  <Box sx={{ 
-                    display: 'flex', 
-                    flexDirection: 'column',
-                    justifyContent: 'center', 
-                    alignItems: 'center', 
-                    height: '100%',
-                    color: 'text.secondary' 
-                  }}>
-                    <Search sx={{ fontSize: 60, color: '#e0e0e0', mb: 2 }} />
-                    <Typography variant="body1">输入关键词开始查询知识库</Typography>
-                  </Box>
-                )
-              )
+          <DialogBody>
+            <InputGroup>
+              <input
+                type="text"
+                placeholder="输入查询内容..."
+                value={queryText}
+                onChange={(e) => setQueryText(e.target.value)}
+                disabled={isQuerying}
+                onKeyPress={(e) => {
+                  if (e.key === 'Enter' && !isQuerying && queryText.trim()) {
+                    queryKnowledge();
+                  }
+                }}
+              />
+              <input
+                type="number"
+                placeholder="结果数量"
+                value={topK}
+                onChange={(e) => setTopK(Math.max(1, parseInt(e.target.value) || 1))}
+                style={{ width: '80px' }}
+                min="1"
+                max="20"
+              />
+              <Button
+                primary
+                onClick={queryKnowledge}
+                disabled={isQuerying || !queryText.trim()}
+              >
+                <FaSearch /> 查询
+              </Button>
+            </InputGroup>
+            
+            {queryError && (
+              <AlertMessage type="error">
+                {queryError}
+                <button onClick={() => setQueryError(null)}><FaTimes /></button>
+              </AlertMessage>
             )}
-          </Box>
-        </DialogContent>
-      </Dialog>
+            
+            {isQuerying ? (
+              <LoadingOverlay>
+                <Spinner />
+              </LoadingOverlay>
+            ) : queryResults.length > 0 ? (
+              <QueryResultList>
+                {queryResults.map((result, index) => (
+                  <QueryResultItem key={index}>
+                    <QueryResultHeader>
+                      <ScoreLabel>
+                        <IoChevronUp /> 相关度: {Math.round((result.score || 0) * 100)}%
+                      </ScoreLabel>
+                      <DialogActionButtonWrapper>
+                        <IconButton 
+                          onClick={() => copyToClipboard(result.document)}
+                          aria-label="复制到剪贴板"
+                        >
+                          <FaCopy />
+                        </IconButton>
+                        <ButtonTooltip>复制到剪贴板</ButtonTooltip>
+                      </DialogActionButtonWrapper>
+                    </QueryResultHeader>
+                    
+                    <QueryResultContent>
+                      {result.document}
+                    </QueryResultContent>
+                    
+                    {result.metadata && Object.keys(result.metadata).length > 0 && (
+                      <QueryResultFooter>
+                        {getFileIcon(result.metadata.source)}
+                        来源: {result.metadata.source || '未知'}
+                      </QueryResultFooter>
+                    )}
+                  </QueryResultItem>
+                ))}
+              </QueryResultList>
+            ) : queryText.trim() && !queryError ? (
+              renderEmptyMessage('没有找到匹配的结果，请尝试其他关键词', <FaSearch />)
+            ) : (
+              renderEmptyMessage('输入关键词开始查询知识库', <FaSearch />)
+            )}
+          </DialogBody>
+        </DialogContainer>
+      </DialogOverlay>
       
       {/* 创建知识库对话框 */}
-      <Dialog open={createDialogOpen} onClose={() => setCreateDialogOpen(false)}>
-        <DialogTitle>创建新的知识库</DialogTitle>
-        <DialogContent>
-          <DialogContentText>
-            请输入知识库的名称和描述信息
-          </DialogContentText>
-          <TextField
-            autoFocus
-            margin="dense"
-            label="知识库名称"
-            fullWidth
-            value={newKnowledgeName}
-            onChange={(e) => setNewKnowledgeName(e.target.value)}
-            sx={{ mb: 2 }}
-          />
-          <TextField
-            margin="dense"
-            label="描述信息"
-            fullWidth
-            multiline
-            rows={3}
-            value={newKnowledgeDesc}
-            onChange={(e) => setNewKnowledgeDesc(e.target.value)}
-          />
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setCreateDialogOpen(false)}>取消</Button>
-          <Button 
-            onClick={createKnowledge} 
-            color="primary"
-            disabled={!newKnowledgeName.trim() || loading}
-          >
-            创建
-          </Button>
-        </DialogActions>
-      </Dialog>
+      <DialogOverlay open={createDialogOpen} onClick={(e) => {
+        if (e.target === e.currentTarget) setCreateDialogOpen(false);
+      }}>
+        <DialogContainer>
+          <DialogHeader>
+            <DialogTitle>
+              <FaPlus /> 创建新的知识库
+            </DialogTitle>
+            <IconButton onClick={() => setCreateDialogOpen(false)}>
+              <FaTimes />
+            </IconButton>
+          </DialogHeader>
+          
+          <DialogBody>
+            <DialogDescription>
+              请输入知识库的名称和描述信息
+            </DialogDescription>
+            
+            <TextField>
+              <label htmlFor="knowledge-name">知识库名称</label>
+              <input
+                id="knowledge-name"
+                type="text"
+                value={newKnowledgeName}
+                onChange={(e) => setNewKnowledgeName(e.target.value)}
+                placeholder="输入知识库名称（必填）"
+                autoFocus
+              />
+            </TextField>
+            
+            <TextField>
+              <label htmlFor="knowledge-desc">描述信息</label>
+              <textarea
+                id="knowledge-desc"
+                value={newKnowledgeDesc}
+                onChange={(e) => setNewKnowledgeDesc(e.target.value)}
+                placeholder="输入知识库描述（选填）"
+                rows={3}
+              />
+            </TextField>
+          </DialogBody>
+          
+          <DialogFooter>
+            <Button onClick={() => setCreateDialogOpen(false)}>
+              取消
+            </Button>
+            <Button 
+              primary
+              onClick={createKnowledge}
+              disabled={!newKnowledgeName.trim() || loading}
+            >
+              创建
+            </Button>
+          </DialogFooter>
+        </DialogContainer>
+      </DialogOverlay>
       
       {/* 删除确认对话框 */}
-      <Dialog open={deleteDialogOpen} onClose={() => setDeleteDialogOpen(false)}>
-        <DialogTitle>确认删除</DialogTitle>
-        <DialogContent>
-          <DialogContentText>
-            {deleteType === 'knowledge' && itemToDelete && (
-              `确定要删除知识库 "${itemToDelete.name}" 吗？这将删除所有相关文件和索引，且无法恢复。`
-            )}
-            {deleteType === 'file' && itemToDelete && (
-              `确定要删除文件 "${itemToDelete.file_name}" 吗？`
-            )}
-          </DialogContentText>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setDeleteDialogOpen(false)}>取消</Button>
-          <Button onClick={handleDeleteConfirm} color="error">
-            删除
-          </Button>
-        </DialogActions>
-      </Dialog>
-    </Container>
+      <DialogOverlay open={deleteDialogOpen} onClick={(e) => {
+        if (e.target === e.currentTarget) setDeleteDialogOpen(false);
+      }}>
+        <DialogContainer>
+          <DialogHeader>
+            <DialogTitle>
+              <FaTrash /> 确认删除
+            </DialogTitle>
+            <IconButton onClick={() => setDeleteDialogOpen(false)}>
+              <FaTimes />
+            </IconButton>
+          </DialogHeader>
+          
+          <DialogBody>
+            <DialogDescription>
+              {deleteType === 'knowledge' && itemToDelete && (
+                `确定要删除知识库 "${itemToDelete.name}" 吗？这将删除所有相关文件和索引，且无法恢复。`
+              )}
+              {deleteType === 'file' && itemToDelete && (
+                `确定要删除文件 "${itemToDelete.file_name}" 吗？`
+              )}
+            </DialogDescription>
+          </DialogBody>
+          
+          <DialogFooter>
+            <Button onClick={() => setDeleteDialogOpen(false)}>
+              取消
+            </Button>
+            <Button 
+              danger
+              onClick={handleDeleteConfirm}
+              disabled={loading}
+            >
+              删除
+            </Button>
+          </DialogFooter>
+        </DialogContainer>
+      </DialogOverlay>
+    </KnowledgeContainer>
   );
-};
-
-// 辅助函数：格式化文件大小
-const formatFileSize = (bytes) => {
-  if (bytes === 0) return '0 B';
-  
-  const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-};
-
-// 辅助函数：格式化日期
-const formatDate = (dateString) => {
-  try {
-    const date = new Date(dateString);
-    return date.toLocaleString();
-  } catch (e) {
-    return dateString;
-  }
 };
 
 export default KnowledgeManager; 

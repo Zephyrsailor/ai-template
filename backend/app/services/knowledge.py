@@ -227,8 +227,7 @@ class KnowledgeService:
                 
                 # 更新文件数量
                 files = list(file_dir.glob('*')) if file_dir.exists() else []
-                kb["file_count"] = len([f for f in files if f.is_file()]) | 1
-                kb["file_count"] = 1
+                kb["file_count"] = len([f for f in files if f.is_file()])
                 
                 # 尝试获取文档数量
                 if vector_dir.exists() and any(vector_dir.iterdir()):
@@ -307,10 +306,9 @@ class KnowledgeService:
                 
                 # 如果不存在集合，则创建一个新的集合
                 try:
-                    chroma_collection = db.get_collection("documents")
-                except:
-                    chroma_collection = db.create_collection("documents")
-                
+                    chroma_collection = db.get_or_create_collection("documents")
+                except Exception as e:
+                    logger.error(f"创建集合失败: {str(e)}")                
                 # 创建向量存储和索引
                 vector_store = ChromaVectorStore(chroma_collection=chroma_collection)
                 
@@ -682,6 +680,7 @@ class KnowledgeService:
             try:
                 db = chromadb.PersistentClient(path=str(vector_dir))
                 coll = db.get_collection("documents")
+                print(coll.count())
                 knowledge_base_info["document_count"] = coll.count()
             except:
                 # 如果获取失败，不更新document_count

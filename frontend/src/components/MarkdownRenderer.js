@@ -112,22 +112,23 @@ const MarkdownContainer = styled.div`
 
 // 为聊天消息定制的样式
 const MessageMarkdownContainer = styled(MarkdownContainer)`
-  color: ${(props) => (props.isUser ? 'white' : 'inherit')};
+  color: ${(props) => (props.isUser ? '#0f172a' : 'inherit')};
 
   a {
-    color: ${(props) => (props.isUser ? '#fff' : '#4a6cf7')};
+    color: ${(props) => (props.isUser ? '#1e40af' : '#4a6cf7')};
   }
   
   code {
-    background-color: ${(props) => (props.isUser ? 'rgba(255, 255, 255, 0.2)' : 'rgba(0, 0, 0, 0.05)')};
+    background-color: ${(props) => (props.isUser ? 'rgba(0, 0, 0, 0.08)' : 'rgba(0, 0, 0, 0.05)')};
   }
   
   pre {
-    background-color: ${(props) => (props.isUser ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.05)')};
+    background-color: ${(props) => (props.isUser ? 'rgba(0, 0, 0, 0.05)' : 'rgba(0, 0, 0, 0.05)')};
   }
   
   blockquote {
-    border-left-color: ${(props) => (props.isUser ? 'rgba(255, 255, 255, 0.5)' : '#ddd')};
+    border-left-color: ${(props) => (props.isUser ? 'rgba(0, 0, 0, 0.3)' : '#ddd')};
+    color: ${(props) => (props.isUser ? '#1e293b' : '#555')};
   }
 `;
 

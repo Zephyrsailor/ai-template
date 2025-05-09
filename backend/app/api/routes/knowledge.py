@@ -181,14 +181,31 @@ async def upload_file(
             "file_size": len(content)
         }
         
-        result = knowledge_service.add_file(name, file_path, metadata)
-        return api_response(message=result["message"])
+        result = knowledge_service.add_file(name, file.filename, metadata)
+        if result["success"]:
+            return api_response(message=result["message"])
+        else:
+            return api_response(code=500, message=result["message"])
     except NotFoundException as e:
         return api_response(code=404, message=str(e))
     except BadRequestException as e:
         return api_response(code=400, message=str(e))
     except Exception as e:
         return api_response(code=500, message=f"文件上传失败: {str(e)}")
+    
+@router.delete("/{name}/files/{file_id}", response_model=DeleteResponse)
+async def delete_file(
+    name: str,
+    file_id: str,
+    knowledge_service: KnowledgeService = Depends(get_knowledge_service_api)
+):
+    try:
+        knowledge_service.delete_file(name, file_id)
+        return api_response(message=f"文件 {file_id} 已删除")
+    except NotFoundException as e:
+        return api_response(code=404, message=str(e))
+    except Exception as e:
+        return api_response(code=500, message=f"删除文件失败: {str(e)}")
     
 @router.post("/{name}/rebuild")
 async def rebuild_knowledge_index(name: str, knowledge_service: KnowledgeService = Depends(get_knowledge_service_api)):
