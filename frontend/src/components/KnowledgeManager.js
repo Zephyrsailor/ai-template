@@ -1,10 +1,19 @@
 import React, { useState, useEffect, useRef } from 'react';
-import axios from 'axios';
+import axios from '../api/http';
 import styled from 'styled-components';
 import { CgSpinner } from 'react-icons/cg';
-import { FaTrash, FaSync, FaFile, FaFolder, FaSearch, FaPlus, FaCopy, FaTimes, FaFileAlt, FaFilePdf, FaFileWord, FaFileExcel, FaFileCode, FaFileImage, FaFileArchive, FaFileAudio, FaFileVideo, FaDatabase, FaTools, FaUpload, FaDownload, FaQuestion } from 'react-icons/fa';
+import { FaTrash, FaSync, FaFile, FaFolder, FaSearch, FaPlus, FaCopy, FaTimes, FaFileAlt, FaFilePdf, FaFileWord, FaFileExcel, FaFileCode, FaFileImage, FaFileArchive, FaFileAudio, FaFileVideo, FaDatabase, FaTools, FaUpload, FaDownload, FaQuestion, FaCog } from 'react-icons/fa';
 import { IoChevronDown, IoChevronUp } from 'react-icons/io5';
 import { HeaderIcon, TooltipContainer, Tooltip as HeaderTooltip } from './Header';
+import { 
+  fetchKnowledgeBases, 
+  createKnowledgeBase, 
+  deleteKnowledgeBase, 
+  getKnowledgeBaseFiles, 
+  uploadFileToKnowledgeBase, 
+  queryKnowledgeBase,
+  updateKnowledgeBase
+} from '../api/index';
 
 // ===== Core Layout Components =====
 const KnowledgeContainer = styled.div`
@@ -556,26 +565,69 @@ const TextField = styled.div`
 
 const InputGroup = styled.div`
   display: flex;
+  width: 100%;
+  gap: 10px;
+  margin-bottom: 20px;
+`;
+
+// 表单组件样式
+const FormGroup = styled.div`
+  margin-bottom: 15px;
+  width: 100%;
+`;
+
+const Label = styled.label`
+  display: block;
+  margin-bottom: 5px;
+  font-weight: 500;
+  color: #333;
+`;
+
+const Input = styled.input`
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 14px;
+  transition: border-color 0.2s;
+  
+  &:focus {
+    border-color: #5c9efa;
+    outline: none;
+  }
+`;
+
+const TextArea = styled.textarea`
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 14px;
+  resize: vertical;
+  min-height: 80px;
+  transition: border-color 0.2s;
+  
+  &:focus {
+    border-color: #5c9efa;
+    outline: none;
+  }
+`;
+
+const CheckboxContainer = styled.div`
+  display: flex;
+  align-items: center;
   gap: 8px;
-  margin-bottom: 16px;
-  
-  input {
-    flex: 1;
-    border: 1px solid #D1D5DB;
-    border-radius: 6px;
-    padding: 10px 12px;
-    font-size: 14px;
-    
-    &:focus {
-      outline: none;
-      border-color: #93C5FD;
-      box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.1);
-    }
-  }
-  
-  @media (max-width: 640px) {
-    flex-direction: column;
-  }
+`;
+
+const Checkbox = styled.input`
+  cursor: pointer;
+  width: 16px;
+  height: 16px;
+`;
+
+const CheckboxLabel = styled.label`
+  cursor: pointer;
+  user-select: none;
 `;
 
 // ===== Miscellaneous UI Components =====
@@ -855,6 +907,12 @@ const KnowledgeManager = ({ isInSettings = false }) => {
   const [itemToDelete, setItemToDelete] = useState(null);
   const [deleteType, setDeleteType] = useState(''); // 'knowledge' 或 'file'
   
+  // 知识库设置相关状态
+  const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
+  const [knowledgeToEdit, setKnowledgeToEdit] = useState(null);
+  const [editName, setEditName] = useState('');
+  const [editDescription, setEditDescription] = useState('');
+  
   // 初始加载知识库列表
   useEffect(() => {
     loadKnowledgeBases();
@@ -872,52 +930,69 @@ const KnowledgeManager = ({ isInSettings = false }) => {
   const loadKnowledgeBases = async () => {
     setLoading(true);
     setError(null);
-    
     try {
-      const response = await axios.get('/api/knowledge');
-      if (response.data.code === 200) {
-        // 使用新格式
-        setKnowledgeBases(response.data.data || []);
-      }  else {
+      const { success, data, message } = await fetchKnowledgeBases();
+      if (success) {
+        setKnowledgeBases(data || []);
+      } else {
         setKnowledgeBases([]);
+        setError(message || '加载知识库失败');
       }
-      
       if (selectedKnowledge) {
-        // 如果已选择了一个知识库，更新它的信息
-        const knowledgeBases = response.data.code === 200 ? 
-          (response.data.data || []) : 
-          (response.data || []);
-        
-        const updated = knowledgeBases.find(kb => kb.name === selectedKnowledge.name);
+        const updated = (data || []).find(kb => kb.id === selectedKnowledge.id);
         if (updated) {
           setSelectedKnowledge(updated);
-          loadFiles(updated.name);
+          loadFiles(updated.id);
         }
       }
     } catch (err) {
-      setError('加载知识库列表失败：' + (err.response?.data?.detail || err.message));
+      setError('加载知识库列表失败：' + (err.message));
     } finally {
       setLoading(false);
     }
   };
 
   // 加载文件列表
-  const loadFiles = async (knowledgeName) => {
-    if (!knowledgeName) return;
-    
+  const loadFiles = async (knowledgeId) => {
+    if (!knowledgeId) return;
     setLoading(true);
     setError(null);
-    
     try {
-      const response = await axios.get(`/api/knowledge/${knowledgeName}/files`);
-      if (response.data.code === 200) {
-        setFiles(response.data.data || []);
+      const response = await getKnowledgeBaseFiles(knowledgeId);
+      if (response.success) {
+        // 处理响应数据
+        let fileArray = response.data;
+        
+        // 如果不是数组，尝试找到数组数据
+        if (!Array.isArray(fileArray)) {
+          console.warn('文件列表不是数组:', fileArray);
+          if (fileArray && Array.isArray(fileArray.data)) {
+            fileArray = fileArray.data;
+          } else {
+            console.error('无法找到文件列表数组');
+            fileArray = [];
+          }
+        }
+        
+        console.log('文件列表数据类型:', Object.prototype.toString.call(fileArray), '长度:', fileArray.length);
+        
+        // 映射字段名，确保与前端组件兼容
+        const mappedFiles = fileArray.map(file => ({
+          file_name: file.file_name || file.filename || '',
+          file_size: file.file_size || file.size || 0,
+          created_at: file.created_at || file.last_modified || new Date().toISOString(),
+          status: file.status || 'unknown',
+          // 保留原始属性以防需要
+          ...file
+        }));
+        setFiles(mappedFiles);
       } else {
-        setError('加载文件列表失败：' + response.data.message);
+        setError(response.message || '加载文件列表失败');
         setFiles([]);
       }
     } catch (err) {
-      setError('加载文件列表失败：' + (err.response?.data?.detail || err.message));
+      console.error('加载文件列表失败:', err);
+      setError('加载文件列表失败：' + (err.message || err));
       setFiles([]);
     } finally {
       setLoading(false);
@@ -927,7 +1002,7 @@ const KnowledgeManager = ({ isInSettings = false }) => {
   // 选择知识库
   const selectKnowledge = (knowledge) => {
     setSelectedKnowledge(knowledge);
-    loadFiles(knowledge.name);
+    loadFiles(knowledge.id);
     // 清空之前的查询结果
     setQueryResults([]);
     setQueryText('');
@@ -939,27 +1014,24 @@ const KnowledgeManager = ({ isInSettings = false }) => {
       setError('知识库名称不能为空');
       return;
     }
-    
     setLoading(true);
     setError(null);
-    
     try {
-      const response = await axios.post('/api/knowledge', {
+      const { success, data, message } = await createKnowledgeBase({
         name: newKnowledgeName.trim(),
         description: newKnowledgeDesc.trim()
       });
-      
-      if (response.data.code === 200) {
+      if (success) {
         setSuccess('知识库创建成功');
         setNewKnowledgeName('');
         setNewKnowledgeDesc('');
         setCreateDialogOpen(false);
         loadKnowledgeBases();
       } else {
-        setError('创建知识库失败：' + response.data.message);
+        setError('创建知识库失败：' + message);
       }
     } catch (err) {
-      setError('创建知识库失败：' + (err.response?.data?.detail || err.message));
+      setError('创建知识库失败：' + (err.message));
     } finally {
       setLoading(false);
     }
@@ -971,61 +1043,22 @@ const KnowledgeManager = ({ isInSettings = false }) => {
       setError('请先选择一个知识库');
       return;
     }
-    
     if (!files || files.length === 0) {
       return;
     }
-    
     setUploadProgress(true);
     setError(null);
-    
     try {
-      const formData = new FormData();
-      
-      if (files.length === 1) {
-        formData.append('file', files[0]);
-        
-        const response = await axios.post(
-          `/api/knowledge/${selectedKnowledge.name}/upload`,
-          formData,
-          {
-            headers: {
-              'Content-Type': 'multipart/form-data'
-            }
-          }
-        );
-        console.log(response.data);
-        
-        if (response.data.code === 200) {
-          setSuccess('文件上传成功');
-        } else {
-          setError('上传文件失败：' + response.data.message);
-        }
+      // 只支持单文件上传
+      const { success, data, message } = await uploadFileToKnowledgeBase(selectedKnowledge.id, files[0]);
+      if (success) {
+        setSuccess('文件上传成功');
+        loadKnowledgeBases();
       } else {
-        for (let i = 0; i < files.length; i++) {
-          formData.append('files', files[i]);
-        }
-        
-        const response = await axios.post(
-          `/api/knowledge/${selectedKnowledge.name}/upload-multiple`,
-          formData,
-          {
-            headers: {
-              'Content-Type': 'multipart/form-data'
-            }
-          }
-        );
-        
-        if (response.data.code === 200) {
-          setSuccess(response.data.message || `成功上传 ${files.length} 个文件`);
-        } else {
-          setError('上传文件失败：' + response.data.message);
-        }
+        setError('上传文件失败：' + message);
       }
-      
-      loadKnowledgeBases();
     } catch (err) {
-      setError('上传文件失败：' + (err.response?.data?.detail || err.message));
+      setError('上传文件失败：' + (err.message));
     } finally {
       setUploadProgress(false);
     }
@@ -1056,28 +1089,22 @@ const KnowledgeManager = ({ isInSettings = false }) => {
   // 删除知识库
   const deleteKnowledge = async () => {
     if (!itemToDelete) return;
-    
     setLoading(true);
     setError(null);
-    
     try {
-      const response = await axios.delete(`/api/knowledge/${itemToDelete.name}`);
-      
-      if (response.data.code === 200) {
+      const { success, message } = await deleteKnowledgeBase(itemToDelete.id);
+      if (success) {
         setSuccess(`知识库 ${itemToDelete.name} 删除成功`);
-        
-        // 如果删除的是当前选择的知识库，清空选择
         if (selectedKnowledge && selectedKnowledge.name === itemToDelete.name) {
           setSelectedKnowledge(null);
           setFiles([]);
         }
-        
         loadKnowledgeBases();
       } else {
-        setError('删除知识库失败：' + response.data.message);
+        setError('删除知识库失败：' + message);
       }
     } catch (err) {
-      setError('删除知识库失败：' + (err.response?.data?.detail || err.message));
+      setError('删除知识库失败：' + (err.message));
     } finally {
       setLoading(false);
     }
@@ -1087,16 +1114,23 @@ const KnowledgeManager = ({ isInSettings = false }) => {
   const deleteFile = async () => {
     if (!selectedKnowledge || !itemToDelete) return;
     
+    const fileName = itemToDelete.file_name;
+    if (!fileName) {
+      setError('无效的文件名');
+      return;
+    }
+    
     setLoading(true);
     setError(null);
     
     try {
-      const response = await axios.delete(`/api/knowledge/${selectedKnowledge.name}/files/${itemToDelete.file_name}`);
+      // 使用导入的axios实例，确保带有认证信息
+      const response = await axios.delete(`/api/knowledge/${selectedKnowledge.id}/files/${encodeURIComponent(fileName)}/`);
       
       if (response.data.code === 200) {
-        setSuccess(`文件 ${itemToDelete.file_name} 删除成功`);
+        setSuccess(`文件 ${fileName} 删除成功`);
         // 移除本地列表中的文件
-        setFiles(files.filter(f => f.file_name !== itemToDelete.file_name));
+        setFiles(files.filter(f => f.file_name !== fileName));
         
         // 更新知识库信息
         loadKnowledgeBases();
@@ -1123,6 +1157,62 @@ const KnowledgeManager = ({ isInSettings = false }) => {
       setDeleteDialogOpen(false);
     }
   };
+  
+  // 打开设置对话框
+  const openSettingsDialog = (knowledge) => {
+    setKnowledgeToEdit(knowledge);
+    setEditName(knowledge.name);
+    setEditDescription(knowledge.description || '');
+    setSettingsDialogOpen(true);
+  };
+  
+  // 关闭设置对话框
+  const closeSettingsDialog = () => {
+    setSettingsDialogOpen(false);
+    setKnowledgeToEdit(null);
+    setEditName('');
+    setEditDescription('');
+  };
+  
+  // 更新知识库
+  const updateKnowledgeSettings = async () => {
+    if (!knowledgeToEdit) return;
+    
+    setLoading(true);
+    setError(null);
+    
+    try {
+      const updateData = {
+        name: editName.trim(),
+        description: editDescription.trim()
+      };
+      
+      const { success, data, message } = await updateKnowledgeBase(knowledgeToEdit.id, updateData);
+      
+      if (success) {
+        setSuccess(`知识库 ${knowledgeToEdit.name} 更新成功`);
+        closeSettingsDialog();
+        
+        // 更新知识库列表和选中的知识库
+        loadKnowledgeBases();
+        
+        // 如果当前选中的是被更新的知识库，更新显示信息
+        if (selectedKnowledge && selectedKnowledge.id === knowledgeToEdit.id) {
+          setSelectedKnowledge({
+            ...selectedKnowledge,
+            name: editName.trim(),
+            description: editDescription.trim()
+          });
+        }
+      } else {
+        setError('更新知识库失败：' + message);
+      }
+    } catch (err) {
+      setError('更新知识库失败：' + (err.message));
+    } finally {
+      setLoading(false);
+    }
+  };
 
   // 重建索引
   const rebuildIndex = async () => {
@@ -1132,10 +1222,11 @@ const KnowledgeManager = ({ isInSettings = false }) => {
     setError(null);
     
     try {
-      const response = await axios.post(`/api/knowledge/${selectedKnowledge.name}/rebuild`);
+      // 使用导入的axios实例，确保带有认证信息
+      const response = await axios.post(`/api/knowledge/${selectedKnowledge.id}/rebuild/`);
       
       if (response.data.code === 200) {
-        setSuccess('索引重建成功');
+        setSuccess(`知识库 ${selectedKnowledge.name} 索引重建成功`);
         // 更新知识库信息
         loadKnowledgeBases();
       } else {
@@ -1154,35 +1245,31 @@ const KnowledgeManager = ({ isInSettings = false }) => {
       setQueryError('请先选择一个知识库');
       return;
     }
-    
     if (!queryText.trim()) {
       setQueryError('请输入查询内容');
       return;
     }
-    
     setIsQuerying(true);
     setQueryError(null);
     setQueryResults([]);
-    
     try {
-      const response = await axios.post(`/api/knowledge/${selectedKnowledge.name}/query`, {
+      const { success, data, message } = await queryKnowledgeBase({
+        knowledge_base_id: selectedKnowledge.id,
         query: queryText.trim(),
         top_k: topK
       });
-      
-      if (response.data.code === 200) {
-        const results = response.data.data || [];
-        
+      if (success) {
+        const results = data || [];
         if (results.length === 0) {
           setQueryError('没有找到匹配的结果，请尝试其他关键词');
         } else {
           setQueryResults(results);
         }
       } else {
-        setQueryError('查询失败：' + response.data.message);
+        setQueryError('查询失败：' + message);
       }
     } catch (err) {
-      setQueryError('查询失败：' + (err.response?.data?.detail || err.message));
+      setQueryError('查询失败：' + (err.message));
     } finally {
       setIsQuerying(false);
     }
@@ -1314,20 +1401,29 @@ const KnowledgeManager = ({ isInSettings = false }) => {
                   <div style={{ display: 'flex', alignItems: 'center' }}>
                     <ActionButtonWrapper>
                       <DeleteButton
-                        iconOnly
-                        danger
-                        className="delete-button"
                         onClick={(e) => {
                           e.stopPropagation();
-                          setItemToDelete(kb);
                           setDeleteType('knowledge');
+                          setItemToDelete(kb);
                           setDeleteDialogOpen(true);
                         }}
-                        aria-label="删除知识库"
+                        className="delete-button"
                       >
                         <FaTrash />
                       </DeleteButton>
                       <ButtonTooltip>删除知识库</ButtonTooltip>
+                    </ActionButtonWrapper>
+                    
+                    <ActionButtonWrapper>
+                      <ActionButton
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openSettingsDialog(kb);
+                        }}
+                      >
+                        <FaCog />
+                      </ActionButton>
+                      <ButtonTooltip>知识库设置</ButtonTooltip>
                     </ActionButtonWrapper>
                   </div>
                 </ListItem>
@@ -1423,6 +1519,8 @@ const KnowledgeManager = ({ isInSettings = false }) => {
               <LoadingOverlay>
                 <Spinner />
               </LoadingOverlay>
+            ) : !Array.isArray(files) ? (
+              renderEmptyMessage('文件列表格式错误', <FaQuestion />)
             ) : files.length === 0 ? (
               renderEmptyMessage('该知识库暂无文件，请点击上传按钮添加文件', <FaUpload />)
             ) : (
@@ -1657,6 +1755,63 @@ const KnowledgeManager = ({ isInSettings = false }) => {
               disabled={loading}
             >
               删除
+            </Button>
+          </DialogFooter>
+        </DialogContainer>
+      </DialogOverlay>
+      
+      {/* 知识库设置对话框 */}
+      <DialogOverlay open={settingsDialogOpen} onClick={(e) => {
+        if (e.target === e.currentTarget) closeSettingsDialog();
+      }}>
+        <DialogContainer>
+          <DialogHeader>
+            <DialogTitle>
+              知识库设置
+            </DialogTitle>
+            <IconButton onClick={closeSettingsDialog}>
+              <FaTimes />
+            </IconButton>
+          </DialogHeader>
+          
+          <DialogBody>
+            <DialogDescription>
+              编辑知识库信息，您可以修改知识库名称和描述。
+            </DialogDescription>
+            
+            <FormGroup>
+              <Label htmlFor="editKnowledgeName">知识库名称</Label>
+              <Input
+                id="editKnowledgeName"
+                type="text"
+                placeholder="请输入知识库名称"
+                value={editName}
+                onChange={(e) => setEditName(e.target.value)}
+              />
+            </FormGroup>
+            
+            <FormGroup>
+              <Label htmlFor="editKnowledgeDesc">知识库描述</Label>
+              <TextArea
+                id="editKnowledgeDesc"
+                placeholder="请输入知识库描述（可选）"
+                value={editDescription}
+                onChange={(e) => setEditDescription(e.target.value)}
+                rows={3}
+              />
+            </FormGroup>
+          </DialogBody>
+          
+          <DialogFooter>
+            <Button onClick={closeSettingsDialog}>
+              取消
+            </Button>
+            <Button
+              style={{ backgroundColor: !editName.trim() || loading ? '#ccc' : '#4385f5', color: 'white' }}
+              onClick={updateKnowledgeSettings}
+              disabled={!editName.trim() || loading}
+            >
+              {loading ? <CgSpinner className="spin" /> : '保存更改'}
             </Button>
           </DialogFooter>
         </DialogContainer>

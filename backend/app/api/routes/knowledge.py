@@ -8,12 +8,14 @@ from pydantic import BaseModel
 
 from ...domain.schemas.knowledge import (
     KnowledgeBaseCreate, KnowledgeBaseResponse, DocumentResponse, 
-    QueryRequest, QueryResponse
+    QueryRequest, QueryResponse, KnowledgeBaseUpdate, KnowledgeShareRequest
 )
 from ...domain.schemas.base import ApiResponse
+from ...domain.models.knowledge_base import KnowledgeBaseType
 from ...services.knowledge import KnowledgeService
 from ...core.errors import NotFoundException, BadRequestException
-from ..deps import get_knowledge_service_api, api_response
+from ..deps import get_knowledge_service, api_response, get_current_user, get_optional_current_user
+from ...domain.models.user import User
 
 router = APIRouter(prefix="/api/knowledge", tags=["knowledge"])
 
@@ -42,15 +44,31 @@ class DeleteResponse(ApiResponse):
     """删除响应"""
     pass
 
+class ShareResponse(ApiResponse):
+    """共享响应"""
+    pass
+
 @router.get("/", response_model=KnowledgeBaseListResponse)
 async def list_knowledge_bases(
-    knowledge_service: KnowledgeService = Depends(get_knowledge_service_api)
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    knowledge_service: KnowledgeService = Depends(get_knowledge_service)
 ):
     """
     列出所有知识库
     """
     try:
-        knowledge_bases = knowledge_service.list_knowledge_bases()
+        knowledge_bases = knowledge_service.list_knowledge_bases(current_user)
+        
+        # 处理每个知识库，补充必要字段
+        for kb in knowledge_bases:
+            if isinstance(kb, dict):
+                if "status" not in kb:
+                    kb["status"] = "active"
+                if "kb_type" not in kb:
+                    kb["kb_type"] = "personal"
+                    if kb.get("is_public"):
+                        kb["kb_type"] = "public"
+        
         return api_response(data=knowledge_bases)
     except Exception as e:
         return api_response(code=500, message=f"获取知识库列表失败: {str(e)}")
@@ -58,7 +76,8 @@ async def list_knowledge_bases(
 @router.post("/", response_model=KnowledgeBaseDetailResponse)
 async def create_knowledge_base(
     kb_create: KnowledgeBaseCreate,
-    knowledge_service: KnowledgeService = Depends(get_knowledge_service_api)
+    current_user: User = Depends(get_current_user),
+    knowledge_service: KnowledgeService = Depends(get_knowledge_service)
 ):
     """
     创建新知识库
@@ -67,165 +86,355 @@ async def create_knowledge_base(
         result = knowledge_service.create_knowledge_base(
             name=kb_create.name,
             description=kb_create.description,
-            embedding_model=kb_create.embedding_model
+            embedding_model=kb_create.embedding_model,
+            is_public=kb_create.is_public,
+            owner=current_user
         )
         
-        # 检查返回值格式，确保与KnowledgeBaseResponse模型一致
-        if isinstance(result, dict) and "info" in result:
-            # 服务层返回了包含info字段的字典，需要提取其中的数据
-            kb_data = result["info"]
-            # 确保包含所有必须字段
-            if "updated_at" not in kb_data and "last_updated" in kb_data:
-                kb_data["updated_at"] = kb_data["last_updated"]
-            # 确保包含embedding_model字段
-            if "embedding_model" not in kb_data:
-                kb_data["embedding_model"] = kb_create.embedding_model or "default"
-                
-            return api_response(data=kb_data)
-        else:
-            # 直接返回结果，假设已符合KnowledgeBaseResponse格式
-            return api_response(data=result)
+        if isinstance(result, dict) and "success" in result:
+            if result["success"]:
+                # 返回info字段中的知识库信息
+                if "info" in result:
+                    # 补充缺少的字段
+                    kb_info = result["info"]
+                    # 添加必要的字段
+                    if "status" not in kb_info:
+                        kb_info["status"] = "active"
+                    if "kb_type" not in kb_info:
+                        kb_info["kb_type"] = "personal"
+                        if kb_info.get("is_public"):
+                            kb_info["kb_type"] = "public"
+                    return api_response(data=kb_info, message=result.get("message", "创建成功"))
+                return api_response(code=500, message="服务返回格式异常，缺少info字段")
+            else:
+                # 创建失败
+                return api_response(code=400, message=result.get("message", "创建失败"))
+        
+        # 直接返回结果
+        return api_response(data=result)
+    except BadRequestException as e:
+        return api_response(code=400, message=str(e))
     except Exception as e:
         return api_response(code=500, message=f"创建知识库失败: {str(e)}")
 
-@router.get("/{kb_id}", response_model=KnowledgeBaseDetailResponse)
+@router.get("/{kb_id}/", response_model=KnowledgeBaseDetailResponse)
 async def get_knowledge_base(
     kb_id: str,
-    knowledge_service: KnowledgeService = Depends(get_knowledge_service_api)
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    knowledge_service: KnowledgeService = Depends(get_knowledge_service)
 ):
     """
     获取知识库详情
     """
     try:
-        kb = knowledge_service.get_knowledge_base(kb_id)
-        return api_response(data=kb)
+        result = knowledge_service.get_knowledge_base(kb_id, current_user)
+        
+        # 补充必要字段
+        if isinstance(result, dict):
+            if "status" not in result:
+                result["status"] = "active"
+            if "kb_type" not in result:
+                result["kb_type"] = "personal"
+                if result.get("is_public"):
+                    result["kb_type"] = "public"
+                    
+        return api_response(data=result)
     except NotFoundException as e:
         return api_response(code=404, message=str(e))
+    except BadRequestException as e:
+        return api_response(code=403, message=str(e))
     except Exception as e:
         return api_response(code=500, message=f"获取知识库失败: {str(e)}")
 
-@router.delete("/{kb_id}", response_model=DeleteResponse)
+@router.put("/{kb_id}/", response_model=KnowledgeBaseDetailResponse)
+async def update_knowledge_base(
+    kb_id: str,
+    kb_update: KnowledgeBaseUpdate,
+    current_user: User = Depends(get_current_user),
+    knowledge_service: KnowledgeService = Depends(get_knowledge_service)
+):
+    """
+    更新知识库信息
+    """
+    try:
+        result = knowledge_service.update_knowledge_base(
+            kb_id=kb_id,
+            name=kb_update.name,
+            description=kb_update.description,
+            is_public=kb_update.is_public,
+            current_user=current_user
+        )
+        
+        if isinstance(result, dict) and "success" in result:
+            if result["success"]:
+                # 返回info字段中的知识库信息
+                if "info" in result:
+                    # 补充缺少的字段
+                    kb_info = result["info"]
+                    # 添加必要的字段
+                    if "status" not in kb_info:
+                        kb_info["status"] = "active"
+                    if "kb_type" not in kb_info:
+                        kb_info["kb_type"] = "personal"
+                        if kb_info.get("is_public"):
+                            kb_info["kb_type"] = "public"
+                    return api_response(data=kb_info, message=result.get("message", "更新成功"))
+                return api_response(data=result, message=result.get("message", "更新成功"))
+            else:
+                # 更新失败
+                return api_response(code=400, message=result.get("message", "更新失败"))
+                
+        return api_response(data=result)
+    except NotFoundException as e:
+        return api_response(code=404, message=str(e))
+    except BadRequestException as e:
+        return api_response(code=403, message=str(e))
+    except Exception as e:
+        return api_response(code=500, message=f"更新知识库失败: {str(e)}")
+
+@router.delete("/{kb_id}/", response_model=DeleteResponse)
 async def delete_knowledge_base(
     kb_id: str,
-    knowledge_service: KnowledgeService = Depends(get_knowledge_service_api)
+    current_user: User = Depends(get_current_user),
+    knowledge_service: KnowledgeService = Depends(get_knowledge_service)
 ):
     """
     删除知识库
     """
     try:
-        knowledge_service.delete_knowledge_base(kb_id)
+        knowledge_service.delete_knowledge_base(kb_id, current_user)
         return api_response(message=f"知识库 {kb_id} 已删除")
     except NotFoundException as e:
         return api_response(code=404, message=str(e))
+    except BadRequestException as e:
+        return api_response(code=403, message=str(e))
     except Exception as e:
         return api_response(code=500, message=f"删除知识库失败: {str(e)}")
 
-@router.get("/{kb_id}/files", response_model=DocumentListResponse)
-async def list_knowledge_base_files(
+@router.get("/{kb_id}/files/", response_model=DocumentListResponse)
+async def list_files(
     kb_id: str,
-    knowledge_service: KnowledgeService = Depends(get_knowledge_service_api)
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    knowledge_service: KnowledgeService = Depends(get_knowledge_service)
 ):
     """
-    获取知识库文件列表
+    获取知识库中的文件列表
     """
     try:
-        files = knowledge_service.list_files(kb_id)
-
-        print("files: ", files)
-        
-        # 将文件数据转换为DocumentResponse格式
-        response_files = []
-        for file in files:
-            response_files.append(DocumentResponse(
-                # id=file["id"],
-                file_name=file["filename"],
-                file_size=file["size"],
-                status=file["status"],
-                # metadata=file.get("metadata", {}),
-                # chunk_count=file.get("chunk_count", 0),
-                created_at=file["last_modified"],
-                # knowledge_base_id=file["knowledge_base_id"]
-            ))
-        
-        return api_response(data=response_files)
+        files = knowledge_service.list_files(kb_id, current_user)
+        return api_response(data=files)
     except NotFoundException as e:
         return api_response(code=404, message=str(e))
+    except BadRequestException as e:
+        return api_response(code=403, message=str(e))
     except Exception as e:
-        return api_response(code=500, message=f"获取知识库文件列表失败: {str(e)}")
+        return api_response(code=500, message=f"获取文件列表失败: {str(e)}")
 
-@router.post("/{name}/upload", response_model=DocumentDetailResponse)
+@router.post("/{kb_id}/upload/", response_model=DocumentDetailResponse)
 async def upload_file(
-    name: str,
+    kb_id: str,
     file: UploadFile = File(...),
-    knowledge_service: KnowledgeService = Depends(get_knowledge_service_api)
+    current_user: User = Depends(get_current_user),
+    knowledge_service: KnowledgeService = Depends(get_knowledge_service)
 ):
     """
     上传文件到知识库
     """
     try:
+        # 读取文件内容
+        content = await file.read()
         
-        # 将文件保存到知识库的文件目录
-        file_dir = knowledge_service.get_files_path(name)
-        file_path = file_dir / file.filename
+        # 上传文件
+        file_info = knowledge_service.upload_file(
+            kb_id=kb_id,
+            file_name=file.filename,
+            file_content=content,
+            file_type=file.content_type,
+            current_user=current_user
+        )
         
-        # 保存文件
-        with open(file_path, 'wb') as f:
-            content = await file.read()
-            f.write(content)
-    
-   
-       # 调用知识库服务处理文件
-        metadata = {
-            "source": file.filename,
-            "file_type": file.content_type,
-            "file_size": len(content)
-        }
+        # 上传文件后自动重建索引，进行向量化处理
+        try:
+            knowledge_service.rebuild_index(kb_id, current_user)
+        except Exception as e:
+            # 如果索引重建失败，记录错误但不影响文件上传结果
+            return api_response(
+                data=file_info, 
+                message=f"文件上传成功，但向量化处理失败: {str(e)}"
+            )
         
-        result = knowledge_service.add_file(name, file.filename, metadata)
-        if result["success"]:
-            return api_response(message=result["message"])
-        else:
-            return api_response(code=500, message=result["message"])
+        return api_response(data=file_info, message="文件上传并向量化成功")
     except NotFoundException as e:
         return api_response(code=404, message=str(e))
     except BadRequestException as e:
-        return api_response(code=400, message=str(e))
+        return api_response(code=403, message=str(e))
     except Exception as e:
-        return api_response(code=500, message=f"文件上传失败: {str(e)}")
+        return api_response(code=500, message=f"上传文件失败: {str(e)}")
     
-@router.delete("/{name}/files/{file_id}", response_model=DeleteResponse)
+@router.delete("/{kb_id}/files/{filename}/", response_model=DeleteResponse)
 async def delete_file(
-    name: str,
-    file_id: str,
-    knowledge_service: KnowledgeService = Depends(get_knowledge_service_api)
+    kb_id: str,
+    filename: str,
+    current_user: User = Depends(get_current_user),
+    knowledge_service: KnowledgeService = Depends(get_knowledge_service)
 ):
+    """
+    删除知识库中的文件
+    """
     try:
-        knowledge_service.delete_file(name, file_id)
-        return api_response(message=f"文件 {file_id} 已删除")
+        knowledge_service.delete_file(kb_id, filename, current_user)
+        return api_response(message=f"文件 {filename} 已从知识库 {kb_id} 中删除")
     except NotFoundException as e:
         return api_response(code=404, message=str(e))
+    except BadRequestException as e:
+        return api_response(code=403, message=str(e))
     except Exception as e:
         return api_response(code=500, message=f"删除文件失败: {str(e)}")
-    
-@router.post("/{name}/rebuild")
-async def rebuild_knowledge_index(name: str, knowledge_service: KnowledgeService = Depends(get_knowledge_service_api)):
-    """重建知识库索引"""
+
+@router.post("/{kb_id}/rebuild/", response_model=ApiResponse)
+async def rebuild_index(
+    kb_id: str,
+    current_user: User = Depends(get_current_user),
+    knowledge_service: KnowledgeService = Depends(get_knowledge_service)
+):
+    """
+    重建知识库索引
+    """
     try:
-        # 同步重建索引
-        result = knowledge_service.rebuild_index(name)
-        if not result["success"]:
-            raise HTTPException(status_code=400, detail=result["message"])
-        return api_response(message=result["message"])
+        result = knowledge_service.rebuild_index(kb_id, current_user)
+        return api_response(data=result, message="索引重建成功")
+    except NotFoundException as e:
+        return api_response(code=404, message=str(e))
+    except BadRequestException as e:
+        return api_response(code=403, message=str(e))
     except Exception as e:
-        return api_response(code=500, message=f"重建知识库索引失败: {str(e)}")
+        return api_response(code=500, message=f"重建索引失败: {str(e)}")
 
-# 知识库查询路由
-@router.post("/{name}/query")
-async def query_knowledge(name: str, request: QueryRequest, knowledge_service: KnowledgeService = Depends(get_knowledge_service_api)):
-    """查询知识库"""
-
+@router.post("/{kb_id}/query/", response_model=ApiResponse)
+async def query_knowledge(
+    kb_id: str,
+    request: QueryRequest,
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    knowledge_service: KnowledgeService = Depends(get_knowledge_service)
+):
+    """
+    查询知识库
+    """
     try:
-        results = knowledge_service.query(name, request.query, request.top_k)
+        results = knowledge_service.query(
+            kb_id=kb_id,
+            query_text=request.query,
+            top_k=request.top_k,
+            current_user=current_user
+        )
+        
         return api_response(data=results)
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+    except NotFoundException as e:
+        return api_response(code=404, message=str(e))
+    except BadRequestException as e:
+        return api_response(code=403, message=str(e))
+    except Exception as e:
+        return api_response(code=500, message=f"查询知识库失败: {str(e)}")
+
+@router.post("/query/", response_model=ApiResponse)
+async def query_multiple_knowledge_bases(
+    request: QueryRequest,
+    knowledge_base_ids: List[str] = Body(..., embed=True),
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    knowledge_service: KnowledgeService = Depends(get_knowledge_service)
+):
+    """
+    同时查询多个知识库
+    """
+    try:
+        results = []
+        for kb_id in knowledge_base_ids:
+            try:
+                kb_results = knowledge_service.query(
+                    kb_id=kb_id,
+                    query_text=request.query,
+                    top_k=request.top_k,
+                    current_user=current_user
+                )
+                results.extend(kb_results)
+                
+            except Exception as e:
+                # 记录错误但继续查询其他知识库
+                print(f"查询知识库 {kb_id} 时出错: {str(e)}")
+        
+        # 按相关性对所有结果排序
+        results.sort(key=lambda x: float(x.get("score", 0)), reverse=True)
+        
+        # 取前N个结果
+        top_results = results[:request.top_k] if results else []
+        
+        return api_response(data=top_results)
+    except Exception as e:
+        return api_response(code=500, message=f"多知识库查询失败: {str(e)}")
+
+@router.post("/{kb_id}/share/", response_model=ShareResponse)
+async def share_knowledge_base(
+    kb_id: str,
+    request: KnowledgeShareRequest,
+    current_user: User = Depends(get_current_user),
+    knowledge_service: KnowledgeService = Depends(get_knowledge_service)
+):
+    """
+    分享知识库给其他用户
+    """
+    try:
+        result = knowledge_service.share_knowledge_base(
+            kb_id=kb_id,
+            user_id=request.user_id,
+            current_user=current_user
+        )
+        return api_response(data=result, message=f"知识库已分享给用户 {request.user_id}")
+    except NotFoundException as e:
+        return api_response(code=404, message=str(e))
+    except BadRequestException as e:
+        return api_response(code=403, message=str(e))
+    except Exception as e:
+        return api_response(code=500, message=f"分享知识库失败: {str(e)}")
+
+@router.delete("/{kb_id}/share/{user_id}/", response_model=ShareResponse)
+async def unshare_knowledge_base(
+    kb_id: str,
+    user_id: str,
+    current_user: User = Depends(get_current_user),
+    knowledge_service: KnowledgeService = Depends(get_knowledge_service)
+):
+    """
+    取消与用户共享知识库
+    """
+    try:
+        result = knowledge_service.unshare_knowledge_base(
+            kb_id=kb_id,
+            user_id=user_id,
+            current_user=current_user
+        )
+        return api_response(data=result, message=f"已取消与用户 {user_id} 的知识库共享")
+    except NotFoundException as e:
+        return api_response(code=404, message=str(e))
+    except BadRequestException as e:
+        return api_response(code=403, message=str(e))
+    except Exception as e:
+        return api_response(code=500, message=f"取消共享知识库失败: {str(e)}")
+
+@router.get("/{kb_id}/shares/", response_model=ApiResponse[List[str]])
+async def get_shared_users(
+    kb_id: str,
+    current_user: User = Depends(get_current_user),
+    knowledge_service: KnowledgeService = Depends(get_knowledge_service)
+):
+    """
+    获取知识库的共享用户列表
+    """
+    try:
+        users = knowledge_service.get_shared_users(kb_id, current_user)
+        return api_response(data=users)
+    except NotFoundException as e:
+        return api_response(code=404, message=str(e))
+    except BadRequestException as e:
+        return api_response(code=403, message=str(e))
+    except Exception as e:
+        return api_response(code=500, message=f"获取共享用户列表失败: {str(e)}")

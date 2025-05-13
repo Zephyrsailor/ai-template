@@ -5,12 +5,15 @@ import secrets
 from typing import Optional, Dict, Any
 
 from fastapi import Depends, HTTPException, status
-from fastapi.security import APIKeyHeader
+from fastapi.security import APIKeyHeader, OAuth2PasswordBearer
 
 from .config import get_settings
 
 # API密钥头部
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+# OAuth2密码Bearer方案
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/token", auto_error=False)
 
 def get_api_key() -> str:
     """生成安全的API密钥"""
@@ -47,4 +50,107 @@ async def verify_api_key(api_key: Optional[str] = Depends(api_key_header)) -> Di
         )
     
     # 这里可以加载更多与API密钥相关的用户信息
-    return {"user_id": api_key[:8], "is_verified": True} 
+    return {"user_id": api_key[:8], "is_verified": True}
+
+"""
+安全相关功能，包括密码哈希和JWT令牌
+"""
+from datetime import datetime, timedelta
+from typing import Any, Optional, Union
+
+from jose import jwt
+from passlib.context import CryptContext
+from pydantic import ValidationError
+
+from ..domain.schemas.user import TokenData
+from ..core.config import get_settings
+
+settings = get_settings()
+
+# 密码上下文
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+# 哈希密码
+def get_password_hash(password: str) -> str:
+    """获取密码哈希值"""
+    return pwd_context.hash(password)
+
+# 验证密码
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    """验证密码"""
+    return pwd_context.verify(plain_password, hashed_password)
+
+# 创建访问令牌
+def create_access_token(
+    user_id: str,
+    username: str,
+    role: str,
+    expires_delta: Optional[timedelta] = None
+) -> str:
+    """创建访问令牌"""
+    expires_delta = expires_delta or timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    
+    expire = datetime.utcnow() + expires_delta
+    to_encode = {
+        "sub": user_id,
+        "username": username,
+        "role": role,
+        "exp": expire
+    }
+    
+    encoded_jwt = jwt.encode(
+        to_encode,
+        settings.SECRET_KEY,
+        algorithm=settings.ALGORITHM
+    )
+    
+    return encoded_jwt
+
+# 验证令牌
+def decode_token(token: str) -> Optional[TokenData]:
+    """解码并验证令牌"""
+    try:
+        payload = jwt.decode(
+            token,
+            settings.SECRET_KEY,
+            algorithms=[settings.ALGORITHM]
+        )
+        
+        user_id: str = payload.get("sub")
+        username: str = payload.get("username")
+        role: str = payload.get("role")
+        exp: int = payload.get("exp")
+        
+        if user_id is None or username is None:
+            return None
+            
+        token_data = TokenData(
+            user_id=user_id,
+            username=username,
+            role=role,
+            exp=datetime.fromtimestamp(exp)
+        )
+        
+        return token_data
+    except (jwt.JWTError, ValidationError):
+        return None
+
+# 验证令牌并返回原始载荷
+def verify_token(token: str) -> Optional[Dict[str, Any]]:
+    """验证令牌并返回payload
+
+    Args:
+        token: JWT令牌
+        
+    Returns:
+        Optional[Dict[str, Any]]: 令牌载荷，无效时返回None
+    """
+    try:
+        payload = jwt.decode(
+            token,
+            settings.SECRET_KEY,
+            algorithms=[settings.ALGORITHM]
+        )
+        return payload
+    except (jwt.JWTError, ValidationError):
+        return None 

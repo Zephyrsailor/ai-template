@@ -1,30 +1,97 @@
 """
-聊天API路由
+聊天相关API路由
 """
+import asyncio
 import json
-from typing import Optional
+import uuid
+from typing import AsyncIterator, List, Dict, Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import StreamingResponse, JSONResponse
 
-from ...domain.schemas.chat import ChatRequest, ToolCallRequest
-from ...domain.constants import EventType
+from ...domain.schemas.chat import ChatRequest, ChatResponse, ToolCallRequest, StreamEvent
+from ...domain.schemas.knowledge import QueryResult
+from ...domain.models.user import User
+from ...domain.constants import MessageRole, EventType
 from ...services.chat import ChatService
 from ...services.knowledge import KnowledgeService
 from ...services.mcp import MCPService
-from ..deps import get_chat_service, get_knowledge_service_api, get_mcp_service_api
-from ...core.config import get_settings, get_llm_model
+from ...services.conversation import ConversationService
+from ...core.config import get_settings
 
-# 创建FastAPI应用
+from ..deps import (
+    get_chat_service_api, get_knowledge_service_api,
+    get_mcp_service_api, api_response, get_current_user, get_optional_current_user
+)
+
 settings = get_settings()
 router = APIRouter(prefix="/api/chat", tags=["chat"])
+
+def get_conversation_service():
+    """获取会话服务实例"""
+    return ConversationService()
+
+@router.post("")
+async def chat_endpoint(
+    request: ChatRequest,
+    chat_service: ChatService = Depends(get_chat_service_api),
+    knowledge_service: KnowledgeService = Depends(get_knowledge_service_api),
+    mcp_service: Optional[MCPService] = Depends(get_mcp_service_api)
+):
+    """
+    聊天API - 一次性返回完整响应
+    """
+    try:
+        # 调用服务进行聊天
+        assistant_response = ""
+        
+        # 如果请求携带了知识库ID列表，进行知识库查询
+        knowledge_context = None
+        if request.knowledge_base_ids:
+            results = knowledge_service.query_multiple(
+                kb_ids=request.knowledge_base_ids,
+                query_text=request.message,
+                top_k=request.top_k or 3
+            )
+            # 格式化查询结果
+            if results:
+                knowledge_context = knowledge_service.format_knowledge_results(results)
+                
+        # 调用模型进行聊天
+        events = []
+        async for event in chat_service.chat_stream(
+            message=request.message,
+            history=request.history,
+            knowledge_context=knowledge_context,
+            system_prompt=request.system_prompt,
+            model_id=request.model_id,
+            temperature=request.temperature,
+            max_tokens=request.max_tokens,
+            stream=False
+        ):
+            events.append(event)
+            if event.type == EventType.CONTENT:
+                assistant_response += event.data.get("content", "")
+                
+        return ChatResponse(
+            message=assistant_response,
+            events=events,
+            query_results=[result for result in results] if request.knowledge_base_ids else None
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"聊天请求处理失败: {str(e)}"
+        )
 
 @router.post("/stream")
 async def chat_stream_endpoint(
     request: ChatRequest,
-    chat_service: ChatService = Depends(get_chat_service),
+    chat_service: ChatService = Depends(get_chat_service_api),
     knowledge_service: KnowledgeService = Depends(get_knowledge_service_api),
-    mcp_service: Optional[MCPService] = Depends(get_mcp_service_api)
+    mcp_service: Optional[MCPService] = Depends(get_mcp_service_api),
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    conversation_service: ConversationService = Depends(get_conversation_service)
 ):
     """
     聊天流API - 接收消息并返回流式响应
@@ -32,8 +99,49 @@ async def chat_stream_endpoint(
     - 可以使用知识库增强回答
     - 可以启用工具调用
     - 自动根据是否有MCP服务器IDs选择使用ReAct模式或普通模式
+    - 自动保存会话历史
     """
     print("request: ", request)
+    
+    # 创建或获取会话
+    conversation = None
+    conversation_id = request.conversation_id
+    
+    if current_user:
+        # 如果提供了会话ID，获取现有会话；否则创建新会话
+        if conversation_id:
+            conversation = conversation_service.get_conversation(current_user.id, conversation_id)
+            if not conversation:
+                # 会话ID无效，创建新会话
+                conversation = conversation_service.create_conversation(
+                    user_id=current_user.id,
+                    title=request.conversation_title or "新会话"
+                )
+                conversation_id = conversation.id
+        else:
+            # 创建新会话
+            conversation = conversation_service.create_conversation(
+                user_id=current_user.id,
+                title=request.conversation_title or "新会话"
+            )
+            conversation_id = conversation.id
+            
+        # 添加用户消息到会话
+        if conversation:
+            message_metadata = {}
+            if request.knowledge_base_ids:
+                message_metadata["knowledge_base_ids"] = request.knowledge_base_ids
+            if request.mcp_server_ids:
+                message_metadata["mcp_server_ids"] = request.mcp_server_ids
+                
+            conversation_service.add_message(
+                user_id=current_user.id,
+                conversation_id=conversation_id,
+                role="user",
+                content=request.message,
+                metadata=message_metadata
+            )
+    
     # 1. 处理知识库查询
     knowledge_context = None
     if request.knowledge_base_ids:
@@ -77,9 +185,9 @@ async def chat_stream_endpoint(
 
     # 3. 创建流式生成器
     async def event_generator():
+        assistant_response = ""  # 收集完整的助手响应
         try:
-           
-            event_stream = chat_service.chat_stream(
+            async for event in chat_service.chat_stream(
                 message=request.message,
                 history=request.history,
                 knowledge_context=knowledge_context,
@@ -89,12 +197,32 @@ async def chat_stream_endpoint(
                 max_tokens=request.max_tokens,
                 tools=tools, 
                 stream=True
-            )
-            
-            # 4. 直接返回事件流
-            async for event in event_stream:
+            ):
                 yield chat_service.format_stream_event(event)
            
+            # 保存助手回复到会话
+            if current_user and conversation:
+                ai_message_metadata = {}
+                if request.model_id:
+                    ai_message_metadata["model_id"] = request.model_id
+                
+                conversation_service.add_message(
+                    user_id=current_user.id,
+                    conversation_id=conversation_id,
+                    role="assistant",
+                    content=assistant_response,
+                    metadata=ai_message_metadata
+                )
+                
+                # 在事件流的最后返回会话ID给前端
+                conversation_data = {
+                    "type": "conversation_id", 
+                    "data": {
+                        "id": conversation_id,
+                        "is_new": conversation.messages and len(conversation.messages) <= 2
+                    }
+                }
+                yield json.dumps(conversation_data) + "\n"
             
             # 如果使用了知识库，在最后添加引用信息
             if request.knowledge_base_ids and 'knowledge_results' in locals() and knowledge_results:
@@ -138,13 +266,20 @@ async def chat_stream_endpoint(
 @router.post("/tool")
 async def call_tool_endpoint(
     request: ToolCallRequest,
-    mcp_service: MCPService = Depends(get_mcp_service_api)
+    mcp_service: MCPService = Depends(get_mcp_service_api),
+    current_user: Optional[User] = Depends(get_optional_current_user)
 ):
     """
     工具调用API - 直接调用指定工具
     """
     try:
-        result = await mcp_service.call_tool(request.tool_name, request.arguments)
+        # 使用用户隔离的工具调用
+        if current_user:
+            result = await mcp_service.call_tool_for_user(current_user.id, request.tool_name, request.arguments)
+        else:
+            # 匿名用户使用普通工具调用
+            result = await mcp_service.call_tool(request.tool_name, request.arguments)
+            
         return {"result": result}
     except Exception as e:
         raise HTTPException(

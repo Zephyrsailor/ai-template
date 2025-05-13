@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
+import axios from '../api/http';
 import { 
   Container, Box, Typography, TextField, Button, List, ListItem, 
   ListItemText, ListItemSecondaryAction, IconButton, Divider, 
@@ -47,7 +47,7 @@ const MCPManager = () => {
     setError(null);
     
     try {
-      const response = await axios.get('/api/mcp/servers');
+      const response = await axios.get('/api/mcp/servers/');
       setMcpServers(response.data.data || []);
     } catch (err) {
       setError('加载MCP服务器列表失败：' + (err.response?.data?.detail || err.message));
@@ -152,7 +152,7 @@ const MCPManager = () => {
         active: true
       };
       
-      const response = await axios.post('/api/mcp/servers', serverData);
+      const response = await axios.post('/api/mcp/servers/', serverData);
       
       if (response.data) {
         setSuccess('MCP服务器创建成功');

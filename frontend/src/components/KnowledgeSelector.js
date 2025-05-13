@@ -200,7 +200,7 @@ const KnowledgeSelector = ({ selectedKbs = [], onChange }) => {
       setLoading(true);
       try {
         const data = await fetchKnowledgeBases();
-        if (data?.code === 200 && Array.isArray(data.data)) {
+        if (data?.success && Array.isArray(data.data)) {
           setKnowledgeBases(data.data);
         } else {
           console.error('Knowledge base data is not in expected format:', data);

@@ -2,9 +2,11 @@ import React, { useState } from 'react';
 import { HiQuestionMarkCircle, HiCog } from 'react-icons/hi';
 import { IoChevronDown } from 'react-icons/io5';
 import { RiRobot2Fill } from 'react-icons/ri';
-import { FaCog, FaQuestionCircle, FaRegQuestionCircle, FaRegLightbulb } from 'react-icons/fa';
+import { FaCog, FaQuestionCircle, FaRegQuestionCircle, FaRegLightbulb, FaSignOutAlt, FaUser } from 'react-icons/fa';
 import { IoSettingsOutline, IoSettingsSharp, IoHelpCircleOutline, IoHelpCircle } from 'react-icons/io5';
 import styled from 'styled-components';
+import { checkAuthStatus } from '../api/index';
+import { logout } from '../api/auth';
 
 // Common styled components that can be reused across the application
 export const TooltipContainer = styled.div`
@@ -61,6 +63,73 @@ export const HeaderIcon = styled.button`
   &:hover {
     background: #f3f4f6;
     color: #2563eb;
+  }
+`;
+
+// 用户信息相关样式
+const UserContainer = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 24px;
+  transition: background-color 0.2s;
+  position: relative;
+  
+  &:hover {
+    background-color: #f3f4f6;
+  }
+`;
+
+const UserAvatar = styled.div`
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background-color: #4B5563;
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+  font-size: 16px;
+`;
+
+const UserName = styled.span`
+  font-size: 14px;
+  font-weight: 500;
+  color: #1F2937;
+`;
+
+const UserMenu = styled.div`
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 8px;
+  background-color: white;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  width: 200px;
+  z-index: 100;
+  overflow: hidden;
+  display: ${({ isOpen }) => isOpen ? 'block' : 'none'};
+`;
+
+const UserMenuItem = styled.div`
+  padding: 10px 16px;
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #4B5563;
+  
+  &:hover {
+    background-color: #f3f4f6;
+  }
+  
+  svg {
+    font-size: 16px;
   }
 `;
 
@@ -130,13 +199,15 @@ const ModelOption = styled.div`
 const Header = ({ 
   assistantName = 'AI 助手', 
   isThinking = false, 
-  userName = 'Zephyr',
   onOpenSettings,
   selectedModel,
   onModelChange,
-  availableModels = []
+  availableModels = [],
+  user = { username: 'User' },
+  onLogout
 }) => {
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   
   const handleDropdownToggle = () => {
     setIsDropdownOpen(!isDropdownOpen);
@@ -152,8 +223,38 @@ const Header = ({
     alert('帮助功能正在开发中...');
   };
   
+  // 点击显示认证状态
+  const showAuthStatus = () => {
+    const status = checkAuthStatus();
+    console.log('当前认证状态:', status);
+    alert(
+      `认证状态:\n` +
+      `Token存在: ${status.hasToken}\n` +
+      `Token长度: ${status.tokenLength}\n` + 
+      `请求头中有认证: ${status.hasAuthHeader}\n` +
+      `认证头部: ${status.headerValue || '无'}`
+    );
+  };
+  
+  // 处理登出
+  const handleLogout = () => {
+    logout();
+    if (onLogout) {
+      onLogout();
+    } else {
+      // 如果没有传入登出回调，则直接刷新页面
+      window.location.reload();
+    }
+  };
+  
+  // 获取用户头像显示文本
+  const getAvatarText = () => {
+    if (!user || !user.username) return '?';
+    return user.username.charAt(0).toUpperCase();
+  };
+  
   return (
-    <header className="flex items-center justify-between py-3 px-4 bg-white border-b border-gray-100 shadow-sm z-10">
+    <header className="flex items-center justify-between py-3 px-4 bg-white border-b border-gray-100 shadow-sm z-10 w-full">
       {/* 左侧部分 - 空白或者可以放置其他元素 */}
       <div className="flex items-center">
         {/* 移除了AI助手标题和模型选择器 */}
@@ -171,22 +272,27 @@ const Header = ({
         </span>
       </div>
       
-      {/* 右侧部分 - 用户控制按钮 */}
+      {/* 右侧部分 - 只保留用户信息，移除其他按钮 */}
       <div className="flex items-center gap-3">
-        <TooltipContainer>
-          <HeaderIcon onClick={handleHelpClick}>
-            <IoHelpCircleOutline size={22} />
-          </HeaderIcon>
-          <Tooltip>
-            <p style={{ margin: '0 0 4px 0', fontWeight: 'bold' }}>帮助提示</p>
-            <p style={{ margin: '0 0 4px 0' }}>• 使用"/"可快速使用系统提示词</p>
-            <p style={{ margin: '0 0 4px 0' }}>• 右侧知识库可上传文档供AI参考</p>
-            <p style={{ margin: '0' }}>• 点击此图标查看更多帮助信息</p>
-          </Tooltip>
-        </TooltipContainer>
-        <HeaderIcon onClick={onOpenSettings}>
-          <IoSettingsOutline size={22} />
-        </HeaderIcon>
+        {/* 用户信息 - 始终显示，不再进行条件渲染 */}
+        <div className="relative">
+          <UserContainer onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}>
+            <UserAvatar>{getAvatarText()}</UserAvatar>
+            <UserName>{user.username}</UserName>
+          </UserContainer>
+          {isUserMenuOpen && (
+            <UserMenu isOpen={true}>
+              <UserMenuItem onClick={onOpenSettings}>
+                <FaCog /> 设置
+              </UserMenuItem>
+              <UserMenuItem onClick={handleLogout}>
+                <FaSignOutAlt /> 退出登录
+              </UserMenuItem>
+            </UserMenu>
+          )}
+        </div>
+        
+        {/* 调试按钮和设置按钮已移除 */}
       </div>
     </header>
   );

@@ -8,6 +8,8 @@ import ThinkingBubble from './ThinkingBubble';
 import { CgSpinner } from 'react-icons/cg';
 import { FiUser } from 'react-icons/fi';
 import { RiRobot2Line } from 'react-icons/ri';
+// 导入API函数
+import { fetchConversations, createConversation, deleteConversation } from '../api';
 
 // 过滤标准消息对象，确保 role 和 content 的有效性
 const filterValidMessages = arr => (arr || []).filter(m =>
@@ -88,6 +90,9 @@ const ChatInterface = ({
     // 更新对话中的消息
     updateConversation(activeConversationId, userMessage);
     
+    // 尝试保存会话到数据库
+    saveCurrentConversation(activeConversationId);
+    
     // 获取历史记录(不包括当前用户消息)
     let history = messages.filter(msg => msg.role === 'user' || msg.role === 'assistant')
       .map(msg => ({ role: msg.role, content: msg.content }));
@@ -131,22 +136,27 @@ const ChatInterface = ({
     try {
       // API端点
       const API_URL = 'http://localhost:8000/api/chat/stream';
-      
       const response = await fetch(API_URL, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('authToken') || ''}`,
         },
         body: JSON.stringify({
           message: messageText,
           history: history,
-          knowledge_base_ids: knowledgeBaseIds, // 添加知识库IDs参数
-          mcp_server_ids: mcpServerIds, // 添加MCP服务器IDs参数
-          use_tools: mcpServerIds.length > 0, // 如果有MCP服务器，则启用工具
-          use_web_search: useWebSearch // 添加网页搜索参数
+          knowledge_base_ids: knowledgeBaseIds,
+          mcp_server_ids: mcpServerIds,
+          use_tools: mcpServerIds.length > 0,
+          use_web_search: useWebSearch,
+          // 如果会话已有服务器ID，则传递它
+          conversation_id: conversations.find(c => c.id === activeConversationId)?.serverId,
+          // 使用会话标题或从用户消息生成标题
+          conversation_title: 
+            conversations.find(c => c.id === activeConversationId)?.title || 
+            (messageText.length > 20 ? messageText.substring(0, 20) + '...' : messageText)
         }),
       });
-      
       if (!response.ok) {
         throw new Error(`API错误: ${response.status}`);
       }
@@ -184,22 +194,39 @@ const ChatInterface = ({
         if (done) break;
         
         const chunkText = decoder.decode(value);
-        
         try {
           // 尝试解析JSON
           const lines = chunkText.split('\n').filter(line => line.trim());
-         
           for (const line of lines) {
             try {
-              console.log(line);
               const chunkData = JSON.parse(line);
               
               if (chunkData.type === 'reasoning' || chunkData.type === 'thinking') {
                 // 收集思考内容
-                thinkingContent += chunkData.data;
+                thinkingContent += (chunkData.data || "");
+                // 在控制台输出收到的思考内容
+                console.log("收到思考内容", (thinkingContent || "").substring(0, 50) + "...");
+                // 更新UI状态
                 setThinking(thinkingContent);
-                setIsThinking(true); // 确保思考标志始终为true
+                setIsThinking(true);
                 collectingThinking = true;
+              } else if (chunkData.type === 'conversation_id' && chunkData.data) {
+                console.log("接收到会话ID:", chunkData.data);
+                const convData = chunkData.data;
+                // 更新本地会话数据
+                setConversations(prev => 
+                  prev.map(conv => {
+                    if (conv.id === activeConversationId) {
+                      // 更新会话ID
+                      return { 
+                        ...conv, 
+                        serverId: convData.id,
+                        isNew: convData.is_new
+                      };
+                    }
+                    return conv;
+                  })
+                );
               } else if (chunkData.type === 'content' || chunkData.type === 'reference') {
                 // 当收到第一个内容块时
                 hasReceivedContent = true;
@@ -334,10 +361,15 @@ const ChatInterface = ({
           const updatedMessages = [...conv.messages, message];
           // 第一条用户消息时，根据消息内容设置会话标题并移除isNew标记
           if (conv.isNew && message.role === 'user') {
+            // 使用用户消息的前30个字符作为标题，超出则添加省略号
+            const newTitle = message.content.length > 30 ? 
+              message.content.substring(0, 30) + '...' : 
+              message.content;
+              
             return { 
               ...conv, 
               messages: updatedMessages,
-              title: message.content.slice(0, 20) + (message.content.length > 20 ? '...' : ''),
+              title: newTitle, // 使用更长的标题摘要
               isNew: false // 已有用户消息，不再是新会话
             };
           }
@@ -392,15 +424,152 @@ const ChatInterface = ({
       // 创建新的会话，但不显示标题，标记为isNew
       const newId = `conv-${Date.now()}`;
       setConversations(prev => [
-        ...prev,
+        // 将新会话添加到顶部
         { 
           id: newId, 
           title: '', // 不设置标题，等用户发送消息后再设置
           messages: [WELCOME_MESSAGE],
           isNew: true // 标记为新会话
-        }
+        },
+        ...prev
       ]);
       setActiveConversationId(newId);
+    }
+  };
+  
+  // 新增保存会话到数据库的方法
+  const saveCurrentConversation = async (conversationId) => {
+    try {
+      // 获取当前活动会话
+      const currentConv = conversations.find(c => c.id === conversationId);
+      if (!currentConv) return;
+      
+      // 获取用户消息，优先使用第一条用户消息作为标题
+      const firstUserMessage = currentConv.messages.find(msg => msg.role === 'user');
+      const titleFromMessage = firstUserMessage ? 
+        (firstUserMessage.content.length > 30 ? 
+          firstUserMessage.content.substring(0, 30) + '...' : 
+          firstUserMessage.content) : 
+        null;
+      
+      // 检查是否已有服务器端ID
+      if (!currentConv.serverId) {
+        // 创建新会话
+        const response = await createConversation({
+          // 优先使用从用户消息生成的标题，而不是使用"新会话"作为默认值
+          title: titleFromMessage || currentConv.title || "新会话",
+          // 可以添加其他元数据
+          metadata: {
+            clientId: currentConv.id,
+            isNew: false
+          }
+        });
+        
+        if (response.data && response.data.id) {
+          // 更新本地会话对象，保存服务器ID
+          setConversations(prev => 
+            prev.map(conv => {
+              if (conv.id === conversationId) {
+                return { ...conv, serverId: response.data.id };
+              }
+              return conv;
+            })
+          );
+          
+          console.log('会话已保存到服务器，ID:', response.data.id);
+        }
+      } else {
+        // 已有服务器ID，后续可以实现更新操作
+        console.log('会话已存在于服务器，ID:', currentConv.serverId);
+      }
+    } catch (error) {
+      console.error('保存会话失败:', error);
+    }
+  };
+  
+  // 载入会话历史
+  useEffect(() => {
+    const loadConversations = async () => {
+      try {
+        const response = await fetchConversations();
+        console.log("加载会话响应:", response);
+        
+        if (response.success && Array.isArray(response.data)) {
+          // 将服务器会话转换为前端会话格式
+          const serverConversations = response.data.map(conv => {
+            // 确保消息是数组格式
+            const convMessages = Array.isArray(conv.messages) ? conv.messages : [];
+            
+            return {
+              id: `local-${conv.id}`, // 本地ID
+              serverId: conv.id,      // 服务器ID
+              title: conv.title || "新会话",
+              messages: convMessages.length > 0 
+                ? convMessages.map(msg => ({
+                    id: msg.id || `msg-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+                    role: msg.role,
+                    content: msg.content,
+                    createdAt: msg.timestamp || new Date().toISOString()
+                  }))
+                : [WELCOME_MESSAGE],
+              isNew: false
+            };
+          });
+          
+          console.log("处理后的会话数据:", serverConversations);
+          
+          // 合并现有会话和服务器会话，确保新会话在顶部
+          setConversations(prev => {
+            // 仅保留新会话
+            const newLocalConvs = prev.filter(c => c.isNew);
+            // 新会话放在顶部
+            return [...newLocalConvs, ...serverConversations];
+          });
+          
+          // 如果有会话且没有活动会话，设置第一个为活动会话
+          if (serverConversations.length > 0 && (!activeConversationId || !conversations.some(c => c.id === activeConversationId))) {
+            setActiveConversationId(serverConversations[0].id);
+          }
+        } else {
+          console.warn("加载会话失败或格式不正确:", response.message);
+        }
+      } catch (error) {
+        console.error('加载会话历史失败:', error);
+      }
+    };
+    
+    // 只有用户已登录时才加载会话
+    if (localStorage.getItem('authToken')) {
+      loadConversations();
+    }
+  }, []);
+
+  // 修改删除会话方法，同步删除服务器数据
+  const handleDeleteConversation = async (conversationId) => {
+    const conversation = conversations.find(c => c.id === conversationId);
+    if (!conversation) return;
+    
+    // 如果有服务器ID，同步删除服务器数据
+    if (conversation.serverId) {
+      try {
+        await deleteConversation(conversation.serverId);
+        console.log('已从服务器删除会话:', conversation.serverId);
+      } catch (error) {
+        console.error('从服务器删除会话失败:', error);
+      }
+    }
+    
+    // 从本地状态中移除会话
+    setConversations(prev => prev.filter(c => c.id !== conversationId));
+    
+    // 如果删除的是当前活动会话，切换到第一个会话或创建新会话
+    if (conversationId === activeConversationId) {
+      const remaining = conversations.filter(c => c.id !== conversationId);
+      if (remaining.length > 0) {
+        setActiveConversationId(remaining[0].id);
+      } else {
+        handleNewChat();
+      }
     }
   };
   
@@ -441,6 +610,7 @@ const ChatInterface = ({
           handleNewChat();
           setCompletedThinking(null); // 新会话时清除已完成的思考
         }}
+        onDeleteChat={handleDeleteConversation}
       />
       
       {/* Main content */}

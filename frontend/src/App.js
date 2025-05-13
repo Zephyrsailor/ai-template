@@ -13,7 +13,34 @@ import { Menu, MenuItem } from '@mui/material';
 import { useRef } from 'react';
 import Tooltip from '@mui/material/Tooltip';
 import { PanelLeft } from 'lucide-react';
-import { sendMessage, fetchConversations as fetchConversationsApi, deleteConversation } from './api/index';
+import { sendMessage, fetchConversations as fetchConversationsApi, deleteConversation, checkAuthStatus, diagnoseConnectionIssues } from './api/index';
+import Auth from './components/Auth';
+import { initAuthToken, getCurrentUser } from './api/auth';
+
+// 全局认证检查和诊断
+const token = localStorage.getItem('authToken');
+
+// 确保axios的全局实例有Authorization头
+if (token) {
+  console.log('全局认证检查: 发现token，长度:', token.length);
+  // 确保这里导入的axios是同一个实例
+  import('./api/http').then(httpModule => {
+    const axios = httpModule.default;
+    axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+    console.log('全局初始化: Authorization头已设置');
+    
+    // 添加全局诊断按钮到window对象，方便通过控制台调用
+    window.diagnoseAPI = diagnoseConnectionIssues;
+    console.log('全局诊断工具已添加到window.diagnoseAPI');
+  });
+} else {
+  console.log('全局认证检查: 未找到token');
+}
+
+// 初始化token并输出状态
+const tokenInitialized = initAuthToken();
+console.log('Token初始化状态:', tokenInitialized);
+console.log('认证状态:', checkAuthStatus());
 
 const AppContainer = styled.div`
   display: flex;
@@ -95,22 +122,20 @@ const STORAGE_KEY = 'ai_chat_history';
 const assistants = [];
 
 function App() {
+  // 所有useState/useEffect都在这里，绝不放在条件分支或return后
   const [activeAssistant, setActiveAssistant] = useState(assistants[0]);
-  // 多会话管理
   const [chatSessions, setChatSessions] = useState(() => {
-    // 初始从localStorage加载
     const saved = localStorage.getItem('ai_chat_sessions');
     return saved ? JSON.parse(saved) : [{ id: 'default', title: '新会话', messages: [] }];
   });
   const [activeSessionId, setActiveSessionId] = useState(chatSessions[0]?.id || 'default');
-  
-  // 设置面板状态
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  
-  // 模型选择状态
   const [selectedModel, setSelectedModel] = useState('default-model');
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [user, setUser] = useState(null);
+  const [anchorEl, setAnchorEl] = useState(null);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
 
-  // 加载历史记录
   useEffect(() => {
     try {
       const savedHistory = localStorage.getItem(STORAGE_KEY);
@@ -124,8 +149,7 @@ function App() {
       console.error('Error loading chat history:', error);
     }
   }, []);
-  
-  // 监听本地存储变化，实时更新历史记录
+
   useEffect(() => {
     const handleStorageChange = () => {
       try {
@@ -145,22 +169,69 @@ function App() {
         console.error('Error loading chat history:', error);
       }
     };
-    
-    // 添加自定义事件监听器
     window.addEventListener('chatHistoryUpdated', handleStorageChange);
-    
-    // 添加storage事件监听器（跨标签页支持）
     window.addEventListener('storage', (e) => {
       if (e.key === STORAGE_KEY) {
         handleStorageChange();
       }
     });
-    
     return () => {
       window.removeEventListener('chatHistoryUpdated', handleStorageChange);
       window.removeEventListener('storage', handleStorageChange);
     };
   }, []);
+
+  useEffect(() => {
+    const checkAuth = async () => {
+      if (initAuthToken()) {
+        const result = await getCurrentUser();
+        if (result.success) {
+          setUser(result.data);
+          setIsAuthenticated(true);
+        } else {
+          setIsAuthenticated(false);
+        }
+      } else {
+        setIsAuthenticated(false);
+      }
+    };
+    checkAuth();
+  }, []);
+
+  // 加载会话列表
+  useEffect(() => {
+    const loadConversations = async () => {
+      try {
+        const conversations = await fetchConversationsApi();
+        // 处理从API获取的会话
+        if (Array.isArray(conversations) && conversations.length > 0) {
+          setChatSessions(prev => {
+            // 合并已有的会话与新获取的会话
+            const newSessions = [...conversations];
+            // 保留本地的default会话
+            const defaultSession = prev.find(s => s.id === 'default');
+            if (defaultSession) {
+              newSessions.unshift(defaultSession);
+            }
+            return newSessions;
+          });
+        }
+      } catch (error) {
+        console.error('Failed to load conversations:', error);
+      }
+    };
+    loadConversations();
+  }, []);
+
+  const handleAuthSuccess = (userData) => {
+    setUser(userData);
+    setIsAuthenticated(true);
+  };
+
+  // 未登录时只渲染登录页
+  if (!isAuthenticated) {
+    return <Auth onAuthSuccess={handleAuthSuccess} />;
+  }
   
   // 新建会话
   const handleNewSession = () => {
@@ -196,7 +267,6 @@ function App() {
   const currentSession = chatSessions.find(s => s.id === activeSessionId) || chatSessions[0];
 
   // 用户菜单逻辑
-  const [anchorEl, setAnchorEl] = useState(null);
   const handleUserMenuOpen = (e) => setAnchorEl(e.currentTarget);
   const handleUserMenuClose = () => setAnchorEl(null);
   
@@ -206,8 +276,18 @@ function App() {
     handleUserMenuClose(); // 关闭用户菜单
   };
 
+  // 处理登出
+  const handleLogout = () => {
+    // 清除认证状态和用户信息
+    setIsAuthenticated(false);
+    setUser(null);
+    // 清除本地存储的令牌
+    localStorage.removeItem('authToken');
+    // 刷新页面
+    window.location.reload();
+  };
+
   // 侧边栏开关
-  const [sidebarOpen, setSidebarOpen] = useState(true);
   const toggleSidebar = () => setSidebarOpen(v => !v);
 
   // 渲染历史记录列表
@@ -269,102 +349,71 @@ function App() {
     });
   };
 
-  // 加载会话列表
-  const loadConversations = async () => {
-    try {
-      const conversations = await fetchConversationsApi();
-      // 处理从API获取的会话
-      if (Array.isArray(conversations) && conversations.length > 0) {
-        setChatSessions(prev => {
-          // 合并已有的会话与新获取的会话
-          const newSessions = [...conversations];
-          // 保留本地的default会话
-          const defaultSession = prev.find(s => s.id === 'default');
-          if (defaultSession) {
-            newSessions.unshift(defaultSession);
-          }
-          return newSessions;
-        });
-      }
-    } catch (error) {
-      console.error('Failed to load conversations:', error);
-    }
-  };
-  
-  // 初始加载会话
-  useEffect(() => {
-    loadConversations();
-  }, []);
-
-  return (
-    <>
-      <GlobalStyles />
-      <div className="flex h-screen w-screen bg-gray-50">
-        {/* 左侧历史会话栏，可关闭 */}
-        {sidebarOpen && (
-          <Sidebar
-            sidebarOpen={sidebarOpen}
-            toggleSidebar={toggleSidebar}
-            onNewSession={handleNewSession}
-            chatSessions={chatSessions}
-            activeSessionId={activeSessionId}
-            onSelectSession={handleSelectSession}
-          />
-        )}
-        {/* 展开侧边栏按钮 */}
-        {!sidebarOpen && (
-          <div className="flex flex-col h-full justify-start items-center pt-4 pl-2 pr-1 bg-transparent">
-            <Tooltip title="Open sidebar" placement="right" arrow>
-              <button className="w-9 h-9 flex items-center justify-center rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-600 transition shadow-none focus:outline-none" onClick={toggleSidebar}>
-                <PanelLeft size={22} />
-              </button>
-            </Tooltip>
-          </div>
-        )}
-        {/* 主聊天区 */}
-        <main className="flex-1 flex flex-col items-center justify-start relative overflow-y-auto bg-gray-50">
-          {/* 顶部Header只保留右上角用户信息和菜单 */}
-          <div className="w-full max-w-4xl mx-auto flex items-center justify-end pt-6 pb-2 px-2">
-            <div className="flex items-center gap-2 pr-2">
-              <div className="w-9 h-9 rounded-full bg-gradient-to-br from-blue-300 to-indigo-400 flex items-center justify-center text-white font-bold text-lg cursor-pointer" onClick={handleUserMenuOpen}>Z</div>
-              <span className="text-gray-700 font-medium cursor-pointer" onClick={handleUserMenuOpen}>Zephyr</span>
-              <Menu anchorEl={anchorEl} open={Boolean(anchorEl)} onClose={handleUserMenuClose} anchorOrigin={{vertical:'bottom',horizontal:'right'}} transformOrigin={{vertical:'top',horizontal:'right'}}>
-                <MenuItem onClick={handleUserMenuClose}>个人信息</MenuItem>
-                <MenuItem onClick={handleOpenSettings}>系统配置</MenuItem>
-                <MenuItem onClick={handleUserMenuClose} className="pl-8">MCP服务器管理</MenuItem>
-                <MenuItem onClick={handleUserMenuClose} className="pl-8">知识库管理</MenuItem>
-                <MenuItem onClick={handleUserMenuClose}>退出登录</MenuItem>
-              </Menu>
+  return !isAuthenticated
+    ? <Auth onAuthSuccess={handleAuthSuccess} />
+    : (
+      <>
+        <GlobalStyles />
+        <div className="flex h-screen w-screen bg-gray-50">
+          {/* 左侧历史会话栏，可关闭 */}
+          {sidebarOpen && (
+            <Sidebar
+              sidebarOpen={sidebarOpen}
+              toggleSidebar={toggleSidebar}
+              onNewSession={handleNewSession}
+              chatSessions={chatSessions}
+              activeSessionId={activeSessionId}
+              onSelectSession={handleSelectSession}
+            />
+          )}
+          {/* 展开侧边栏按钮 */}
+          {!sidebarOpen && (
+            <div className="flex flex-col h-full justify-start items-center pt-4 pl-2 pr-1 bg-transparent">
+              <Tooltip title="Open sidebar" placement="right" arrow>
+                <button className="w-9 h-9 flex items-center justify-center rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-600 transition shadow-none focus:outline-none" onClick={toggleSidebar}>
+                  <PanelLeft size={22} />
+                </button>
+              </Tooltip>
             </div>
-          </div>
-          {/* 聊天窗口无历史时居中显示，输入框自动聚焦 */}
-          <div className={`flex-1 w-full flex flex-col items-center justify-${currentSession.messages.length === 0 ? 'center' : 'end'}`}>
-            <div className="w-full max-w-4xl flex-1 flex flex-col justify-end pt-2 pb-36">
-              <ChatInterface 
-                assistantName="ChatGPT"
-                messages={currentSession.messages}
-                onMessagesChange={msgs => handleUpdateSession(currentSession.id, msgs)}
-                autoFocusInput={currentSession.messages.length === 0}
-                onOpenSettings={handleOpenSettings}
-                isThinking={false}
-              />
+          )}
+          {/* 主聊天区 */}
+          <main className="flex-1 flex flex-col items-center justify-start relative overflow-y-auto bg-gray-50">
+            {/* 使用Header组件替代原有用户菜单 */}
+            <Header 
+              isThinking={false}
+              onOpenSettings={handleOpenSettings}
+              user={user}
+              onLogout={handleLogout}
+            />
+            
+            {/* 聊天窗口无历史时居中显示，输入框自动聚焦 */}
+            <div className={`flex-1 w-full flex flex-col items-center justify-${currentSession.messages.length === 0 ? 'center' : 'end'}`}>
+              <div className="w-full max-w-4xl flex-1 flex flex-col justify-end pt-2 pb-36">
+                <ChatInterface 
+                  assistantName="ChatGPT"
+                  messages={currentSession.messages}
+                  onMessagesChange={msgs => handleUpdateSession(currentSession.id, msgs)}
+                  autoFocusInput={currentSession.messages.length === 0}
+                  onOpenSettings={handleOpenSettings}
+                  isThinking={false}
+                />
+              </div>
             </div>
-          </div>
-          <div className="fixed bottom-0 left-72 right-0 flex justify-center pb-8 z-30">
-            <div className="w-full max-w-4xl"></div>
-          </div>
-        </main>
-      </div>
-      
-      {/* 设置面板 */}
-      <Settings 
-        isOpen={isSettingsOpen} 
-        onClose={() => setIsSettingsOpen(false)} 
-        selectedModel={selectedModel}
-        setSelectedModel={setSelectedModel}
-      />
-    </>
-  );
+            <div className="fixed bottom-0 left-72 right-0 flex justify-center pb-8 z-30">
+              <div className="w-full max-w-4xl"></div>
+            </div>
+          </main>
+        </div>
+        
+        {/* 设置面板 */}
+        <Settings 
+          isOpen={isSettingsOpen} 
+          onClose={() => setIsSettingsOpen(false)} 
+          selectedModel={selectedModel}
+          setSelectedModel={setSelectedModel}
+        />
+      </>
+    );
 }
 
 export default App; 

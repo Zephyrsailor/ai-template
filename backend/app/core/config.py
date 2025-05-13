@@ -36,6 +36,14 @@ class Settings(BaseSettings):
     OPENAI_BASE_URL: Optional[str] = None
     DEEPSEEK_BASE_URL: Optional[str] = None
 
+    # JWT认证配置
+    SECRET_KEY: str = "supersecretkey"  # 生产环境应使用安全的密钥并通过环境变量配置
+    ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7  # 7天
+
+    # 用户数据存储目录
+    USERS_DATA_DIR: str = "data/users"
+
     class Config:
         """Pydantic配置"""
         env_file = ".env"

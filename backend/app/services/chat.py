@@ -62,7 +62,7 @@ class ChatService:
         )
         
         logger.info(f"开始ReAct模式聊天，消息: '{message[:50]}...'，模型: {model_id or self.settings.LLM_MODEL_NAME}")
-        
+                
         # 调用模型的ReAct模式
         async for event in self.provider.completions(
             messages=messages,
