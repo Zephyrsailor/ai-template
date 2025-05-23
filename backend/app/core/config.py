@@ -44,6 +44,10 @@ class Settings(BaseSettings):
     # 用户数据存储目录
     USERS_DATA_DIR: str = "data/users"
 
+    # 网络搜索配置
+    GOOGLE_API_KEY: Optional[str] = None
+    GOOGLE_CSE_ID: Optional[str] = None
+
     class Config:
         """Pydantic配置"""
         env_file = ".env"

@@ -357,4 +357,4 @@ if __name__ == "__main__":
 - https://deepwiki.com/ deepwiki 开源项目解读（内部项目不要尝试，解读的项目会存档，公网访问）
 - https://deepwiki.com/modelcontextprotocol/python-sdk/2.1-fastmcp-server mcp python-sdk 代码解读内容
 - https://claude.ai/download claude 桌面应用下载地址
-
+- https://github.com/luminati-io/brightdata-mcp 

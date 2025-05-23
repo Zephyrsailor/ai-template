@@ -12,10 +12,12 @@ from ..services.knowledge import KnowledgeService
 from .database import Database
 from .security import oauth2_scheme, verify_token
 from ..domain.models.user import User
+from ..services.conversation import ConversationService
 
 # 单例对象
 _mcp_service: Optional[MCPService] = None
 _knowledge_service: Optional[KnowledgeService] = None
+_conversation_service: Optional[ConversationService] = None
 
 # 单例数据库实例
 @lru_cache()
@@ -46,6 +48,15 @@ def get_knowledge_service() -> KnowledgeService:
         _knowledge_service = KnowledgeService(db)
         
     return _knowledge_service
+
+def get_conversation_service() -> ConversationService:
+    """获取对话服务"""
+    global _conversation_service
+    
+    if _conversation_service is None:
+        _conversation_service = ConversationService()
+        
+    return _conversation_service
 
 def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
     """获取当前登录用户
@@ -146,3 +157,11 @@ def api_response(code: int = 200, message: str = "success", data: Any = None) ->
 def get_knowledge_service_api() -> KnowledgeService:
     """获取知识库服务(API兼容版本)"""
     return get_knowledge_service() 
+
+def get_mcp_service_api() -> MCPService:
+    """获取MCP服务(API兼容版本)"""
+    return get_mcp_service()
+
+def get_conversation_service_api() -> ConversationService:
+    """获取对话服务(API兼容版本)"""
+    return get_conversation_service()

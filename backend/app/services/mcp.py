@@ -109,12 +109,12 @@ class MCPService:
                  raise ServiceException("MCP服务未能成功初始化")
 
 
-    async def get_tools(self, category: Optional[str] = None) -> List[Tool]:
+    async def get_tools(self, selected_servers: Optional[List[Dict[str, Any]]] = None) -> List[Tool]:
         """
         获取可用工具列表
 
         Args:
-            category: 可选的工具类别过滤器
+            selected_servers: mcp servers
 
         Returns:
             工具列表
@@ -123,13 +123,13 @@ class MCPService:
         assert self.hub is not None # _ensure_initialized 应该保证这一点
 
         try:
-            # 缓存键
-            cache_key = f"tools_{category or 'all'}"
+            # # 缓存键
+            # cache_key = "tools_all"
 
-            # 检查缓存 (简单实现，可能需要更复杂的缓存策略)
-            if cache_key in self._tools_cache:
-                 # logger.debug(f"命中工具缓存: {cache_key}")
-                 return self._tools_cache[cache_key]
+            # # 检查缓存 (简单实现，可能需要更复杂的缓存策略)
+            # if cache_key in self._tools_cache:
+            #      # logger.debug(f"命中工具缓存: {cache_key}")
+            #      return self._tools_cache[cache_key]
 
             # 从 Hub 获取工具列表
             # 注意：MCPHub 的 list_tools 返回的是一个包含 .tools 属性的对象
@@ -156,7 +156,7 @@ class MCPService:
                         ))
 
                 # 获取服务器名称，如果存在
-                server_name = getattr(tool, "server", None)
+                server_name = tool.name.split("/")[0]
                 # 创建唯一的工具ID
                 tool_id = f"{server_name}/{tool.name}" if server_name else tool.name
 
@@ -169,12 +169,12 @@ class MCPService:
                     parameters=parameters
                 )
 
-                # 应用类别过滤 (如果需要)
-                # if category is None or tool_model.category == category:
-                converted_tools.append(tool_model)
+                for server in selected_servers:
+                    if server.get("name") == server_name:
+                        converted_tools.append(tool_model)
 
             # 更新缓存
-            self._tools_cache[cache_key] = converted_tools
+            # self._tools_cache[cache_key] = converted_tools
             # logger.debug(f"已缓存工具: {cache_key}, 数量: {len(converted_tools)}")
 
             return converted_tools
@@ -544,6 +544,12 @@ class MCPService:
         servers.append(new_server)
         self._save_servers(servers)
         logger.info(f"已添加MCP服务器: {new_server['name']} (ID: {new_server['id']})")
+
+        # 清理缓存
+        self._tools_cache = {}
+        self._initialized = False
+        self.initialize()
+
         return new_server
 
     def update_server(self, server_id: str, server_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -585,6 +591,12 @@ class MCPService:
         if not server_found:
             logger.warning(f"尝试更新服务器失败，未找到ID: {server_id}")
             return None
+        
+        # 清理缓存
+        self._tools_cache = {}
+
+        self._initialized = False
+        self.initialize()
 
         return updated_server
 
@@ -598,9 +610,14 @@ class MCPService:
         if len(servers) < original_length:
             self._save_servers(servers)
             logger.info(f"已删除MCP服务器，ID: {server_id}")
+             # 清理缓存
+            self._tools_cache = {}
+            self._initialized = False
+            self.initialize()
             return True
         else:
             logger.warning(f"尝试删除服务器失败，未找到ID: {server_id}")
+            
             return False
 
     def _load_servers(self) -> List[Dict[str, Any]]:

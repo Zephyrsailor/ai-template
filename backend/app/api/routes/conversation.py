@@ -85,7 +85,9 @@ async def list_conversations(
                 role=msg.role,
                 content=msg.content,
                 timestamp=msg.timestamp,
-                metadata=msg.metadata
+                metadata=msg.metadata,
+                thinking=msg.thinking,
+                tool_calls=msg.tool_calls or []
             )
             
         response.append(ConversationListResponse(
@@ -187,7 +189,9 @@ async def add_message(
         conversation_id=conversation_id,
         role=data.role,
         content=data.content,
-        metadata=data.metadata
+        metadata=data.metadata,
+        thinking=data.thinking,
+        tool_calls=data.tool_calls
     )
     
     if not message:
@@ -199,7 +203,9 @@ async def add_message(
         role=message.role,
         content=message.content,
         timestamp=message.timestamp,
-        metadata=message.metadata
+        metadata=message.metadata,
+        thinking=message.thinking,
+        tool_calls=message.tool_calls or []
     )
     
     return api_response(data=response)
@@ -258,7 +264,9 @@ def _conversation_to_response(conversation) -> ConversationResponse:
             role=msg.role,
             content=msg.content,
             timestamp=msg.timestamp,
-            metadata=msg.metadata
+            metadata=msg.metadata,
+            thinking=msg.thinking,
+            tool_calls=msg.tool_calls or []
         ))
     
     return ConversationResponse(

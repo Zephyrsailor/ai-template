@@ -7,8 +7,8 @@ import chromadb
 from glob import glob
 from pathlib import Path
 
-from knowledge.document import Document, load_documents_from_file
-from knowledge.config import KnowledgeBaseConfig
+from .document import Document, load_documents_from_file
+from .config import KnowledgeBaseConfig
 
 class KnowledgeBaseBuilder:
     """知识库构建器，负责从文件中构建知识库"""
@@ -91,6 +91,159 @@ class KnowledgeBaseBuilder:
             metadata={"dimension": self.model_dimension, "model": self.embedding_model}
         )
         self.logger.info(f"已创建新集合: {self.collection_name}")
+
+    def _load_and_parse_file_to_structured_blocks(self, 
+                                                 file_path_str: str, 
+                                                 file_db_id: str, # 文件的唯一DB ID
+                                                 kb_id: str, # 知识库ID
+                                                 source_filename: str # 原始文件名
+                                                 ) -> List[Dict[str, Any]]:
+        """
+        【新增辅助函数】封装了文件加载、解析和元数据初步整理。
+        返回 List[Dict[str, Any]]，每个Dict包含 "text" 和 "metadata"。
+        metadata 中已包含所有提取的元数据，并加入了 file_ref_id, kb_id, source_filename。
+        """
+        self.logger.info(f"Builder: 正在加载和解析文件 {source_filename} (DB ID: {file_db_id})")
+        # 这里的 load_documents_from_file 是你 lib.knowledge 中的核心函数
+        # 它应该返回 List[YourCustomDocument] 或 List[Dict[str, Any]]
+        # 假设它返回 List[YourCustomDocument]
+        parsed_custom_docs: List[Document] = load_documents_from_file(file_path_str)
+        
+        if not parsed_custom_docs:
+            return []
+
+        structured_blocks = []
+        for custom_doc_block in parsed_custom_docs:
+            block_text = custom_doc_block.text
+            block_metadata = custom_doc_block.metadata.copy() if custom_doc_block.metadata else {}
+
+            if not block_text:
+                continue
+            
+            # 【核心】确保用于删除和关联的ID以及基础信息在元数据中
+            block_metadata['file_ref_id'] = str(file_db_id) 
+            block_metadata['knowledge_base_id'] = str(kb_id)
+            block_metadata['source_filename'] = source_filename
+            # 你在_parse_markdown_text中提取的其他元数据应该已经在这里了
+
+            # 确保元数据值类型正确
+            for key, value in block_metadata.items():
+                if not isinstance(value, (str, int, float, bool, list)):
+                    block_metadata[key] = str(value)
+                elif isinstance(value, list):
+                    block_metadata[key] = [str(v) if not isinstance(v, (str, int, float, bool)) else v for v in value]
+            
+            structured_blocks.append({"text": block_text, "metadata": block_metadata})
+        
+        self.logger.info(f"Builder: 文件 {source_filename} 共生成 {len(structured_blocks)} 个结构化文档块。")
+        return structured_blocks
+    
+    def _get_collection(self):
+        """获取ChromaDB collection"""
+        return self.client.get_or_create_collection(self.collection_name)
+
+    def index_single_file(self, 
+                          file_path: str, 
+                          file_database_id: str, 
+                          knowledge_base_id: str,
+                          source_filename_for_metadata: str # 用于元数据中的文件名
+                         ) -> Dict[str, Any]:
+        """
+        【Builder对外核心方法 - 处理单个文件】
+        加载、解析、提取元数据、删除旧索引、向量化并存入ChromaDB。
+        """
+        self.logger.info(f"Builder: 开始索引文件 {source_filename_for_metadata} (DB ID: {file_database_id}) for KB: {knowledge_base_id}")
+        result_summary = {"file_id": file_database_id, "status": "PENDING", "nodes_indexed": 0, "message": ""}
+        
+        collection = self._get_collection() # 获取ChromaDB collection
+
+        # 1. 删除此文件在ChromaDB中所有已存在的旧文档块
+        try:
+            self.logger.info(f"Builder: 正在删除与 file_ref_id='{file_database_id}' 关联的旧文档块...")
+            collection.delete(where={"file_ref_id": str(file_database_id)})
+            self.logger.info(f"Builder: 与 file_ref_id='{file_database_id}' 关联的旧文档块（如果存在）已删除。")
+        except Exception as e_del:
+            self.logger.warning(f"Builder: 删除旧文档块时异常 (file_ref_id='{file_database_id}'): {e_del}")
+            pass 
+
+        # 2. 加载、解析并结构化文档块 (调用新的辅助函数)
+        structured_blocks = self._load_and_parse_file_to_structured_blocks(
+            file_path_str=file_path,
+            file_db_id=file_database_id,
+            kb_id=knowledge_base_id,
+            source_filename=source_filename_for_metadata
+        )
+
+        if not structured_blocks:
+            self.logger.warning(f"Builder: 文件 {source_filename_for_metadata} 未生成任何可索引的文档块。")
+            result_summary["status"] = "SUCCESS_EMPTY"
+            result_summary["message"] = "文件内容为空或无法解析出有效文本块。"
+            return result_summary
+            
+        # 3. 准备数据并添加到ChromaDB (这部分逻辑与之前的 process_document_chunks_for_indexing 类似)
+        ids_to_add = []
+        texts_to_add = []
+        metadatas_to_add = []
+        embeddings_to_add = []
+        
+        for i, block_data in enumerate(structured_blocks): # block_data 是 {"text": ..., "metadata": ...}
+            chroma_doc_id = f"{file_database_id}_chunk_{i}"
+            ids_to_add.append(chroma_doc_id)
+            texts_to_add.append(block_data["text"])
+            metadatas_to_add.append(block_data["metadata"]) # metadata 应该已经包含了 file_ref_id 等
+            
+            try:
+                embedding_vector = self.get_embedding(block_data["text"])
+                embeddings_to_add.append(embedding_vector)
+            except Exception as e_embed:
+                # ... (错误处理) ...
+                ids_to_add.pop(); texts_to_add.pop(); metadatas_to_add.pop()
+                continue
+        
+        if ids_to_add:
+            collection.add(
+                ids=ids_to_add,
+                documents=texts_to_add,
+                metadatas=metadatas_to_add,
+                embeddings=embeddings_to_add
+            )
+            self.logger.info(f"Builder: 成功为 file_ref_id='{file_database_id}' 添加/更新 {len(ids_to_add)} 个文档块。")
+            result_summary["status"] = "SUCCESS"
+            result_summary["nodes_indexed"] = len(ids_to_add)
+            # ...
+        else:
+            # ... (处理无有效块的情况) ...
+            result_summary["status"] = "SUCCESS_NO_NODES"
+
+        return result_summary
+
+    # 全量重建函数，它会调用上面的核心处理函数
+    def rebuild_kb_index_from_directory(self, directory_path: str, kb_id: str, file_repo: Any) -> int:
+        self.logger.info(f"Builder: 开始对知识库 {kb_id} 进行全量索引重建，数据源: {directory_path}")
+        self.clear_kb_collection()
+        
+        all_files = [] # 你获取文件列表的逻辑
+        # ... (glob files) ...
+        
+        total_nodes_indexed_count = 0
+        for file_path_str in all_files:
+            file_model = file_repo.find_by_path_and_kb_id(file_path_str, kb_id) # 你需要实现这个
+            if not file_model:
+                self.logger.warning(f"Builder: 全量重建时未在DB找到文件: {file_path_str}，跳过。")
+                continue
+            
+            result = self.index_single_file(
+                file_path=file_model.file_path, # 使用 FileModel 中的路径
+                file_database_id=str(file_model.id),
+                knowledge_base_id=kb_id,
+                source_filename_for_metadata=file_model.file_name # 使用 FileModel 中的文件名
+            )
+            if result["status"] == "SUCCESS":
+                total_nodes_indexed_count += result["nodes_indexed"]
+            # ... (错误处理) ...
+        
+        self.logger.info(f"Builder: 知识库 {kb_id} 全量重建完成，共处理 {total_nodes_indexed_count} 个文档块。")
+        return total_nodes_indexed_count
     
     def build_from_directory(self, directory_path: str) -> int:
         """

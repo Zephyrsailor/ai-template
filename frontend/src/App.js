@@ -301,45 +301,31 @@ function App() {
       );
     }
 
-    // 对话分组
-    const conversations = [];
-    let currentConversation = [];
-    
-    for (const message of currentSession.messages) {
-      if (message.role === 'user' && currentConversation.length > 0) {
-        conversations.push([...currentConversation]);
-        currentConversation = [message];
-      } else {
-        currentConversation.push(message);
-      }
-    }
-    
-    if (currentConversation.length > 0) {
-      conversations.push(currentConversation);
-    }
-    
-    return conversations.map((conversation, index) => {
-      const firstUserMessage = conversation.find(msg => msg.role === 'user');
-      const timestamp = firstUserMessage?.timestamp;
+    // 显示每个会话记录，而不是分割会话
+    return chatSessions.map((session, index) => {
+      // 找到第一条用户消息用于标题
+      const firstUserMessage = session.messages.find(msg => msg.role === 'user');
+      const timestamp = firstUserMessage?.timestamp || session.messages[0]?.timestamp;
       
       return (
         <HistoryItem 
-          key={index} 
+          key={session.id} 
           onClick={() => {
+            // 设置当前会话
+            setActiveSessionId(session.id);
             // 找到AI聊天助手对象，并设置为当前活动助手
             const aiChatAssistant = assistants.find(a => a.id === 'ai-chat');
             if (aiChatAssistant) {
               setActiveAssistant(aiChatAssistant);
             }
-            // 这里可以添加加载特定对话的逻辑
           }}
         >
           <HistoryTitle>
-            {firstUserMessage?.content.substring(0, 40) || "对话记录"}
-            {firstUserMessage?.content.length > 40 ? '...' : ''}
+            {session.title || (firstUserMessage?.content.substring(0, 40) || "对话记录")}
+            {firstUserMessage?.content && firstUserMessage.content.length > 40 ? '...' : ''}
           </HistoryTitle>
           <HistoryPreview>
-            {conversation.length} 条消息
+            {session.messages.length} 条消息
           </HistoryPreview>
           <HistoryDate>
             {timestamp ? new Date(timestamp).toLocaleString() : '未知时间'}

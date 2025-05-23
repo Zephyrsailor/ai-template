@@ -18,6 +18,7 @@ class ChatRequest(BaseModel):
     temperature: Optional[float] = None
     max_tokens: Optional[int] = None
     top_k: Optional[int] = None
+    stream: Optional[bool] = True
     # 知识库相关
     knowledge_base_ids: Optional[List[str]] = None
     # 工具相关

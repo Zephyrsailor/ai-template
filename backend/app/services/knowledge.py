@@ -21,6 +21,9 @@ from ..core.database import Database
 from ..domain.models.user import User, UserRole
 from ..domain.models.knowledge_base import KnowledgeBase, KnowledgeFile, KnowledgeBaseType, KnowledgeBaseStatus, FileStatus
 from ..repositories.knowledge_repository import KnowledgeBaseRepository, KnowledgeFileRepository
+from ..lib.knowledge.document import load_documents_from_file
+from ..lib.knowledge.builder import KnowledgeBaseBuilder
+from ..lib.knowledge.config import KnowledgeBaseConfig
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +37,27 @@ class KnowledgeService:
         self.kb_repo = KnowledgeBaseRepository(database)
         self.file_repo = KnowledgeFileRepository(database)
         self._embedding_model = None
+         # 你可以在这里为每个知识库配置一个Builder，或者按需创建
+        self.builders: Dict[str, KnowledgeBaseBuilder] = {} 
+
+    
+    def _get_builder_for_kb(self, kb_id: str) -> KnowledgeBaseBuilder:
+        """获取或创建指定知识库的Builder实例"""
+        kb = self.kb_repo.get_by_id(kb_id)
+        if not kb:
+            raise NotFoundException(f"知识库 {kb_id} 不存在")
+        
+        # 假设你的KnowledgeBaseConfig可以从kb对象或全局settings构建
+        kb_config = KnowledgeBaseConfig(
+            collection_name=f"kb_{kb_id}_collection", # 或者从kb对象获取collection_name
+            embedding_model=kb.embedding_model, # 从kb对象获取
+            db_path=self.kb_repo.get_knowledge_base_storage_path(kb_id) / "chroma_db" # 示例路径
+            # ...其他配置...
+        )
+        # 缓存Builder实例，避免重复创建
+        if kb_id not in self.builders:
+            self.builders[kb_id] = KnowledgeBaseBuilder(config=kb_config)
+        return self.builders[kb_id]
         
     def get_embedding_model(self):
         """获取嵌入模型"""
@@ -113,9 +137,10 @@ class KnowledgeService:
             name=name,
             description=description,
             owner_id=owner.id if owner else None,
-            embedding_model=embedding_model or "default",
+            embedding_model=embedding_model or self.get_embedding_model().model_name,
             status=KnowledgeBaseStatus.ACTIVE,
             kb_type=kb_type if kb_type else KnowledgeBaseType.PERSONAL,
+            is_public=is_public
         )
         
         # 保存到数据库
@@ -306,7 +331,51 @@ class KnowledgeService:
         
         # 转换为字典列表
         return [file.to_dict() for file in files]
+    
+    def add_or_update_file_to_kb(self, kb_id: str, file_id: str, current_user: Optional[User] = None) -> Dict[str, Any]:
+        logger.info(f"Service: 开始处理知识库 {kb_id} 中的文件 {file_id}")
+        # 1. Service层负责业务逻辑：获取对象、权限检查、状态更新
+        kb = self.kb_repo.get_by_id(kb_id)
+        if not self._can_modify_knowledge_base(kb, current_user):
+            raise BadRequestException("无权修改此知识库")
+        
+        file_model = self.file_repo.get_by_id(file_id) # FileModel是你数据库中的文件对象
+        if not file_model:
+            raise NotFoundException(f"文件 {file_id} 不存在")
+        
+        if file_model.knowledge_base_id != kb_id:
+            raise BadRequestException(f"文件 {file_id} 不属于知识库 {kb_id}")
 
+        file_model.status = FileStatus.PROCESSING # 更新状态
+        self.file_repo.update(file_model)
+
+        try:
+            # 2. 获取Builder实例
+            builder = self._get_builder_for_kb(kb_id) # 假设这个方法能正确返回Builder实例
+            
+            # 3. Service层直接调用Builder的封装好的方法
+            result = builder.index_single_file(
+                file_path=file_model.file_path,
+                file_database_id=str(file_model.id),
+                knowledge_base_id=kb_id,
+                source_filename_for_metadata=file_model.file_name
+            )
+            
+            # 4. Service层根据Builder返回的结果，更新数据库状态
+            if result["status"] == "SUCCESS":
+                file_model.status = FileStatus.INDEXED
+                file_model.chunk_count = result["nodes_indexed"]
+                logger.info(f"Service: 文件 {file_id} 处理成功。")
+            else:
+                file_model.status = FileStatus.ERROR
+                logger.error(f"Service: 文件 {file_id} 处理失败。原因: {result['message']}")
+            self.file_repo.update(file_model)
+            
+            return result
+
+        except Exception as e:
+            # ... (错误处理) ...
+            raise ServiceException(f"处理文件失败: {e}")
     def rebuild_index(self, kb_id: str, current_user: Optional[User] = None) -> bool:
         """重建知识库索引"""
         # 获取知识库
@@ -428,6 +497,73 @@ class KnowledgeService:
             self.kb_repo.update(kb)
             raise ServiceException(f"重建索引失败: {str(e)}")
 
+    def rebuild_index2(self, kb_id: str, current_user: Optional[User] = None) -> bool:
+        """重建知识库索引"""
+        # 获取知识库
+        kb = self.kb_repo.get_by_id(kb_id)
+        if not kb:
+            raise NotFoundException(f"知识库 {kb_id} 不存在")
+            
+        # 检查权限
+        if not self._can_modify_knowledge_base(kb, current_user):
+            raise BadRequestException("无权重建此知识库索引")
+        
+        # 更新知识库状态
+        kb.status = KnowledgeBaseStatus.BUILDING
+        self.kb_repo.update(kb)
+        
+        try:
+            # 获取文件列表
+            files = self.file_repo.find_by_knowledge_base(kb_id)
+            
+            # 如果没有文件，无需创建索引
+            if not files:
+                kb.status = KnowledgeBaseStatus.ACTIVE
+                kb.document_count = 0
+                self.kb_repo.update(kb)
+                return True
+           
+            builder = self._get_builder_for_kb(kb_id)
+            total_nodes = 0
+            for file in files:
+                # 更新文件状态
+                file.status = FileStatus.PROCESSING
+                self.file_repo.update(file)
+                
+                try:
+                    result = builder.index_single_file(
+                        file_path=file.file_path,
+                        file_database_id=str(file.id),
+                        knowledge_base_id=kb_id,
+                        source_filename_for_metadata=file.file_name
+                    )
+                    if result["status"] == "SUCCESS":
+                        total_nodes += result["nodes_indexed"]
+                            
+                    # 更新文件状态和块数量
+                    file.status = FileStatus.INDEXED
+                    file.chunk_count = result["nodes_indexed"]
+                    self.file_repo.update(file)                    
+                    
+                except Exception as e:
+                    logger.error(f"处理文件 {file.file_name} 出错: {str(e)}")
+                    file.status = FileStatus.ERROR
+                    self.file_repo.update(file)
+            
+            # 更新知识库状态和文档数量
+            kb.status = KnowledgeBaseStatus.ACTIVE
+            kb.document_count = total_nodes
+            self.kb_repo.update(kb)
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"重建知识库 {kb_id} 索引出错: {str(e)}")
+            kb.status = KnowledgeBaseStatus.ERROR
+            self.kb_repo.update(kb)
+            raise ServiceException(f"重建索引失败: {str(e)}")
+        
+
     def query(self, kb_id: str, query_text: str, top_k: int = 5, 
              current_user: Optional[User] = None) -> List[Dict[str, Any]]:
         """查询知识库"""
@@ -537,3 +673,26 @@ class KnowledgeService:
             formatted_text += f"{content}\n\n"
         
         return formatted_text 
+    
+    def _get_or_create_vector_store_index(self, kb_id: str) -> VectorStoreIndex:
+        """
+        【辅助函数】获取或创建指定知识库的LlamaIndex VectorStoreIndex。
+        """
+        kb_storage_path = self.kb_repo.get_knowledge_base_storage_path(kb_id)
+        vectors_dir = kb_storage_path / "vectors"
+        
+        client = chromadb.PersistentClient(path=str(vectors_dir))
+        collection = client.get_or_create_collection("documents") # 统一collection名称
+        vector_store = ChromaVectorStore(chroma_collection=collection)
+        embed_model = self.get_embedding_model()
+        
+        index = VectorStoreIndex.from_vector_store(vector_store, embed_model=embed_model)
+        return index
+
+    def _get_vector_store_path(self, kb_id: str) -> str:
+         # 获取知识库存储路径
+        kb_path = self.kb_repo.get_knowledge_base_storage_path(kb_id)
+        vectors_dir = kb_path / "vectors"
+        return vectors_dir
+
+    

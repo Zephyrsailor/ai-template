@@ -15,6 +15,7 @@ from .chunking import StructureAwareChunker
 from llama_index.core.schema import Document as LlamaDocument, TextNode
 from llama_index.core.readers import SimpleDirectoryReader
 from unstructured.partition.auto import partition
+from datetime import datetime
 
 # 尝试导入UnstructuredReader
 try:
@@ -291,20 +292,25 @@ def load_from_unstructured(file_path: str) -> List[Document]:
     
     try:
         logger.info("使用UnstructuredReader加载文档")
-        elements = partition(file_path)
+        elements = partition(file_path,strategy="hi_res")
         
         # --- 添加调试日志 ---
-        logger.debug(f"Unstructured partition elements ({len(elements)}):")
+        # 假设 elements 是你从 partition_pdf 得到的列表
         for i, element in enumerate(elements):
-             # 打印元素的类别和前100个字符的文本
-             element_text_preview = str(element)[:100].replace("\n", " ")
-             logger.debug(f"  Element {i}: Category='{element.category}', Text='{element_text_preview}...'" )
+            print(f"--- Element {i} ---")
+            print(f"Type: {type(element).__name__}")
+            print(f"Text: {element.text[:100]}...") # 打印前100个字符
+            if hasattr(element, 'metadata'):
+                print(f"Metadata: {element.metadata.to_dict()}") # 打印元数据字典
+            if type(element).__name__ == "Title":
+                # 重点检查 Title 元素的元数据
+                pass
         # --- 结束调试日志 ---
         
         # 创建基本元数据
         metadata = {
             'source': os.path.basename(file_path),
-            'created_at': '2025-04-07',
+            'created_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
             'content_type': '内容'
         }
         
@@ -313,7 +319,7 @@ def load_from_unstructured(file_path: str) -> List[Document]:
             # 提取元素文本和元数据
             element_text = str(element)
             if len(element_text) < 20:  # 跳过非常短的元素
-                logger.debug(f"  Skipping short element: {element_text_preview}...")
+                logger.debug(f"  Skipping short element: ...")
                 continue
                 
             # 创建文档

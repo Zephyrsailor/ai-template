@@ -338,90 +338,48 @@ const ThinkingBubble = ({
   autoCollapse = false,
   preserveContent = true
 }) => {
+  // 只在首次渲染时根据 isThinking/isCompleted/isHistorical 决定初始折叠状态，后续完全由用户控制
   const [collapsed, setCollapsed] = useState(
-    isThinking ? false : autoCollapse || isHistorical || isCompleted
+    autoCollapse || isHistorical || isCompleted
   );
   const [hasScroll, setHasScroll] = useState(false);
   const contentRef = useRef(null);
-  
-  // 检查内容是否需要滚动，并处理滚动位置
+
+  // 检查内容是否需要滚动
   useEffect(() => {
     if (contentRef.current) {
       const hasOverflow = contentRef.current.scrollHeight > contentRef.current.clientHeight;
       setHasScroll(hasOverflow);
-      
-      // 当内容更新且处于思考状态时，自动滚动到底部查看最新内容
-      if (isThinking && !collapsed && hasOverflow) {
-        contentRef.current.scrollTop = contentRef.current.scrollHeight;
-      }
     }
-  }, [thinking, collapsed, isThinking]);
-  
-  // 修改历史记录展示逻辑 - 历史记录默认保持折叠
-  useEffect(() => {
-    // 只有在正在思考状态下，组件才自动展开
-    if (isThinking) {
-      setCollapsed(false);
-    } else if ((isHistorical || isCompleted) && !preserveContent) {
-      // 历史记录默认折叠，除非特别指定preserveContent
-      setCollapsed(true);
-    }
-  }, [isThinking, isHistorical, isCompleted, preserveContent]);
+  }, [thinking, collapsed]);
 
-  // 修改切换折叠状态的处理函数，增加滚动逻辑
+  // 用户可随时手动展开/收缩
   const handleToggleCollapse = (e) => {
     e.stopPropagation();
-    
-    setCollapsed(prev => {
-      const newState = !prev;
-      
-      // 当展开时，在下一个渲染周期处理滚动
-      if (!newState) { // 从折叠到展开
-        setTimeout(() => {
-          if (contentRef.current) {
-            if (isThinking) {
-              // 如果正在思考，滚动到底部查看最新内容
-              contentRef.current.scrollTop = contentRef.current.scrollHeight;
-            } else {
-              // 否则滚动到顶部
-              contentRef.current.scrollTop = 0;
-            }
-          }
-        }, 100);
-      }
-      
-      return newState;
-    });
+    setCollapsed(prev => !prev);
   };
-  
-  // 思考内容为空且不是正在思考状态，且不是历史记录和不是已完成状态，不显示组件
-  if (!thinking && !isThinking && !isHistorical && !isCompleted) {
+
+  // 只要有内容或已完成/历史就显示
+  if (!thinking && !isThinking && !isHistorical && !isCompleted && !preserveContent) {
     return null;
   }
-  
-  // 如果是历史记录但内容为空，也不显示
-  if ((isHistorical || isCompleted) && (!thinking || thinking.trim() === '')) {
+  if ((isHistorical || isCompleted) && (!thinking || thinking.trim() === '') && !preserveContent) {
     return null;
   }
 
+  // 标题逻辑优化
   const getHeaderTitle = () => {
-    if (isHistorical) {
-      return '历史思考过程';
-    }
-    
-    if (isCompleted) {
-      return '思考已完成';
-    }
-    
-    if (isThinking) {
-      return '正在思考中...';
-    }
-    
+    if (isHistorical) return '历史思考过程';
+    if (isCompleted) return '思考已完成';
+    if (isThinking) return '正在思考中...';
     return '思考过程';
   };
-  
+
+  // 判断是否显示动画
+  const showThinkingAnim = isThinking && !isCompleted && !isHistorical;
+
   return (
-    <ThinkingWrapper $isThinking={isThinking}>
+    <ThinkingWrapper $isThinking={isThinking && !isCompleted && !isHistorical}>
       <ThinkingContainer 
         $collapsed={collapsed} 
         $isHistorical={isHistorical}
@@ -434,16 +392,15 @@ const ThinkingBubble = ({
           $isCompleted={isCompleted}
         >
           <HeaderIcon 
-            $isThinking={isThinking} 
+            $isThinking={isThinking && !isCompleted && !isHistorical} 
             $collapsed={collapsed}
             $isCompleted={isCompleted}
           >
             <HiOutlineSparkles size={18} />
           </HeaderIcon>
-          
           <HeaderTitle>
             {getHeaderTitle()}
-            {isThinking && !collapsed && (
+            {(showThinkingAnim && !collapsed) && (
               <SpinnerIcon>
                 <ThinkingProgress />
               </SpinnerIcon>
@@ -456,7 +413,6 @@ const ThinkingBubble = ({
               </CollapsedIndicator>
             )}
           </HeaderTitle>
-          
           <ToggleButton 
             onClick={handleToggleCollapse}
             $collapsed={collapsed}
@@ -464,7 +420,6 @@ const ThinkingBubble = ({
             {collapsed ? <FaChevronDown size={14} /> : <FaChevronUp size={14} />}
           </ToggleButton>
         </ThinkingHeader>
-        
         <ThinkingContentWrapper 
           $collapsed={collapsed} 
           $hasScroll={hasScroll}
@@ -477,7 +432,7 @@ const ThinkingBubble = ({
               />
             ) : (
               <PlaceholderContent>
-                {isThinking ? (
+                {showThinkingAnim ? (
                   <ThinkingDots>
                     <ThinkingDot delay={0} />
                     <ThinkingDot delay={0.2} />

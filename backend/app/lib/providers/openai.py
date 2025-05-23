@@ -68,95 +68,64 @@ class OpenAIProvider(BaseProvider):
                 yield ModelEvent(EventType.ERROR, {"error": error_msg})
                 return
             
-            # 进行对话直到获得最终回答或达到终止条件
-            has_final_answer = False
-            max_iterations = 20  # 为了安全设置最大迭代次数
-            iteration = 0
-            
-            while not has_final_answer and iteration < max_iterations:
-                # 处理模型响应
-                full_response = ""
-                has_tool_call = False
-                model_response_error = False
+            full_response = ""
+            has_tool_call = False
+            model_response_error = False
+
+            try:
+                response_stream = await self.client.chat.completions.create(
+                    model=model_id,
+                    messages=conversation_messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    stream=stream,
+                    **kwargs
+                )
                 
-                try:
-                    response_stream = await self.client.chat.completions.create(
-                        model=model_id,
-                        messages=conversation_messages,
-                        temperature=temperature,
-                        max_tokens=max_tokens,
-                        stream=stream,
-                        **kwargs
-                    )
+                async for chunk in response_stream:
+                    delta = getattr(chunk.choices[0], 'delta', None)                    
+                    # 处理思考内容
+                    reasoning_chunk = getattr(delta, 'reasoning_content', getattr(delta, 'thinking', None))
+                    if reasoning_chunk:
+                        yield ModelEvent(EventType.THINKING, reasoning_chunk)
+                        
+                    # 处理常规内容
+                    content_chunk = getattr(delta, 'content', None)
+                    if content_chunk:
+                        full_response += content_chunk
+                        
+                        # 检测是否包含工具调用
+                        if "```" in full_response and not has_tool_call:
+                            has_tool_call = True
+                        
+                        # 如果没有工具调用，直接输出内容
+                        if not has_tool_call:
+                            yield ModelEvent(EventType.CONTENT, content_chunk)
                     
-                    async for chunk in response_stream:
-                        delta = getattr(chunk.choices[0], 'delta', None)
-                        
-                        # 处理思考内容
-                        reasoning_chunk = getattr(delta, 'reasoning_content', getattr(delta, 'thinking', None))
-                        if reasoning_chunk:
-                            yield ModelEvent(EventType.THINKING, reasoning_chunk)
-                            
-                        # 处理常规内容
-                        content_chunk = getattr(delta, 'content', None)
-                        if content_chunk:
-                            full_response += content_chunk
-                            
-                            # 检测是否包含工具调用
-                            if "```" in full_response and not has_tool_call:
-                                has_tool_call = True
-                            
-                            # 如果没有工具调用，直接输出内容
-                            if not has_tool_call:
-                                yield ModelEvent(EventType.CONTENT, content_chunk)
-                        
-                except (APITimeoutError, RateLimitError, APIError) as api_error:
-                    error_msg = f"API 错误: {str(api_error)}"
-                    yield ModelEvent(EventType.ERROR, {"error": error_msg})
-                    print(f"API错误: {error_msg}")
-                    model_response_error = True
-                    
-                except Exception as e:
-                    error_msg = f"流处理错误: {str(e)}"
-                    yield ModelEvent(EventType.ERROR, {"error": error_msg})
-                    print(f"流处理错误: {error_msg}")
-                    model_response_error = True
+            except (APITimeoutError, RateLimitError, APIError) as api_error:
+                error_msg = f"API 错误: {str(api_error)}"
+                yield ModelEvent(EventType.ERROR, {"error": error_msg})
+                print(f"API错误: {error_msg}")
+                model_response_error = True
                 
-                # 如果发生错误或响应为空，退出循环
-                if model_response_error or not full_response:
-                    break
-                
-                # 将助手回复添加到对话历史
-                conversation_messages.append({"role": "assistant", "content": full_response})
-                
-                # 处理工具调用(如果有)
-                if has_tool_call:
-                    tool_call_json = self._parse_tool_call(full_response)
-                    if tool_call_json:
-                        # 执行工具调用并获取结果
-                        tool_results = await self._execute_tool_calls(tool_call_json)
-                        
-                        # 向用户显示工具调用结果
-                        for result in tool_results:
-                            yield result
-                        
-                        # 构建观察结果并添加到对话
-                        observation = self._build_observation_message(tool_results)
-                        if observation:
-                            conversation_messages.append({"role": "user", "content": observation})
-                            
-                        # 继续对话循环
-                        iteration += 1
-                    else:
-                        # 工具调用格式不正确，视为最终回答
-                        has_final_answer = True
-                else:
-                    # 没有工具调用，视为最终回答
-                    has_final_answer = True
+            except Exception as e:
+                error_msg = f"流处理错误: {str(e)}"
+                yield ModelEvent(EventType.ERROR, {"error": error_msg})
+                print(f"流处理错误: {error_msg}")
+                model_response_error = True
             
-            # 检查是否因为达到最大迭代次数而退出
-            if iteration >= max_iterations:
-                yield ModelEvent(EventType.ERROR, {"error": "对话达到最大迭代次数限制。"})
+            # 如果发生错误或响应为空，退出循环
+            if model_response_error or not full_response:
+                return
+            
+            # 将助手回复添加到对话历史
+            # conversation_messages.append({"role": "assistant", "content": full_response})
+            
+            # 处理工具调用(如果有)
+            if has_tool_call:
+                tool_call_json = self._parse_tool_call(full_response)
+                if tool_call_json:
+                    yield ModelEvent(EventType.TOOL_CALL, tool_call_json)
                 
         except Exception as e:
             error_msg = f"对话处理错误: {str(e)}"

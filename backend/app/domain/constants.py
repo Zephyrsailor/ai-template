@@ -36,7 +36,7 @@ class EventType(str, Enum):
     ERROR = "error"
     REFERENCE = "reference"
     FINAL_CONTENT = "final_content"
-
+    CONVERSATION_CREATED = "conversation_created"
 class KnowledgeBaseStatus(str, Enum):
     """知识库状态枚举"""
     CREATING = "creating"

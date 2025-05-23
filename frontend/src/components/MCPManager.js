@@ -67,7 +67,7 @@ const MCPManager = () => {
     setServerName(server.name);
     setServerDescription(server.description || '');
     setServerUrl(server.url || '');
-    setServerType(server.type || 'stdio');
+    setServerType(server.transport || 'stdio');
     setServerCommand(server.command || '');
     setServerArgs(Array.isArray(server.args) ? server.args.join('\n') : server.args || '');
     setServerEnv(typeof server.env === 'object' ? 
@@ -145,7 +145,7 @@ const MCPManager = () => {
         name: serverName.trim(),
         description: serverDescription.trim(),
         url: serverUrl.trim(),
-        type: serverType,
+        transport: serverType,
         command: serverCommand.trim(),
         args: argsArray,
         env: envObject,
@@ -203,7 +203,7 @@ const MCPManager = () => {
         name: serverName.trim(),
         description: serverDescription.trim(),
         url: serverUrl.trim(),
-        type: serverType,
+        transport: serverType,
         command: serverCommand.trim(),
         args: argsArray,
         env: envObject
@@ -655,9 +655,9 @@ const MCPManager = () => {
                       <Grid item xs={12} sm={6}>
                         <Typography variant="subtitle2" color="textSecondary">类型</Typography>
                         <Typography variant="body1">
-                          {selectedServer.type === 'stdio' ? '标准输入/输出 (stdio)' :
-                           selectedServer.type === 'sse' ? '服务器发送事件 (sse)' :
-                           selectedServer.type === 'streamableHttp' ? '可流式传输的HTTP' : '未设置'}
+                          {selectedServer.transport === 'stdio' ? '标准输入/输出 (stdio)' :
+                           selectedServer.transport === 'sse' ? '服务器发送事件 (sse)' :
+                           selectedServer.transport === 'streamableHttp' ? '可流式传输的HTTP' : '未设置'}
                         </Typography>
                       </Grid>
                       

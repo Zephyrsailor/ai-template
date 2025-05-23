@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { HiPlus, HiOutlineChatAlt, HiOutlineTrash } from 'react-icons/hi';
+import ConfirmDialog from './ConfirmDialog';
 
 const Sidebar = ({ 
   conversations = [], 
@@ -78,38 +79,58 @@ const Sidebar = ({
 };
 
 // 提取出单个会话项组件便于重用
-const ConversationItem = ({ chat, isActive, onSelect, onDelete }) => (
-  <div 
-    className={`
-      flex items-center justify-between py-2 px-3 rounded-lg cursor-pointer hover:bg-gray-100
-      ${isActive ? 'bg-purple-50 hover:bg-purple-50 border border-purple-200' : ''}
-    `}
-    onClick={() => onSelect(chat.id)}
-  >
-    <div className="flex items-center space-x-3 flex-1 min-w-0">
-      <HiOutlineChatAlt
-        className={`h-5 w-5 ${isActive ? 'text-purple-500' : 'text-gray-400'}`}
-      />
-      <span className="text-sm text-gray-700 truncate flex-1">
-        {chat.title || '新会话'}
-      </span>
-    </div>
-    
-    {/* 删除按钮 */}
-    {onDelete && (
-      <button 
-        className="p-1 rounded-full text-gray-400 hover:bg-gray-200 hover:text-red-500"
-        onClick={(e) => {
-          e.stopPropagation(); // 防止触发选择会话
-          if (window.confirm('确定要删除这个会话吗？')) {
-            onDelete(chat.id);
-          }
-        }}
+const ConversationItem = ({ chat, isActive, onSelect, onDelete }) => {
+  // 添加状态控制确认对话框
+  const [showConfirmDialog, setShowConfirmDialog] = useState(false);
+
+  return (
+    <>
+      <div 
+        className={`
+          flex items-center justify-between py-2 px-3 rounded-lg cursor-pointer hover:bg-gray-100
+          ${isActive ? 'bg-purple-50 hover:bg-purple-50 border border-purple-200' : ''}
+        `}
+        onClick={() => onSelect(chat.id)}
       >
-        <HiOutlineTrash className="h-4 w-4" />
-      </button>
-    )}
-  </div>
-);
+        <div className="flex items-center space-x-3 flex-1 min-w-0">
+          <HiOutlineChatAlt
+            className={`h-5 w-5 ${isActive ? 'text-purple-500' : 'text-gray-400'}`}
+          />
+          <span className="text-sm text-gray-700 truncate flex-1">
+            {chat.title || '新会话'}
+          </span>
+        </div>
+        
+        {/* 删除按钮 */}
+        {onDelete && (
+          <button 
+            className="p-1 rounded-full text-gray-400 hover:bg-gray-200 hover:text-red-500"
+            onClick={(e) => {
+              e.stopPropagation(); // 防止触发选择会话
+              setShowConfirmDialog(true);
+            }}
+          >
+            <HiOutlineTrash className="h-4 w-4" />
+          </button>
+        )}
+      </div>
+
+      {/* 使用自定义确认对话框 */}
+      <ConfirmDialog
+        isOpen={showConfirmDialog}
+        onClose={() => setShowConfirmDialog(false)}
+        onConfirm={() => {
+          onDelete(chat.id);
+          setShowConfirmDialog(false);
+        }}
+        title="确认删除"
+        message={`确定要删除会话 "${chat.title || '新会话'}" 吗？`}
+        confirmText="删除"
+        cancelText="取消"
+        type="danger"
+      />
+    </>
+  );
+};
 
 export default Sidebar; 

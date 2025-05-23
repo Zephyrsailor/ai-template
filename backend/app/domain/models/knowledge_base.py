@@ -37,6 +37,7 @@ class KnowledgeBase:
         file_count: int = 0,
         document_count: int = 0,
         shared_with: Optional[List[str]] = None,
+        is_public: bool = False,
     ):
         self.id = id
         self.name = name
@@ -50,7 +51,7 @@ class KnowledgeBase:
         self.file_count = file_count
         self.document_count = document_count
         self.shared_with = shared_with or []
-        
+        self.is_public = is_public
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典"""
         return {
@@ -66,7 +67,7 @@ class KnowledgeBase:
             "file_count": self.file_count,
             "document_count": self.document_count,
             "shared_with": self.shared_with,
-            "is_public": self.kb_type == KnowledgeBaseType.PUBLIC
+            "is_public": self.is_public
         }
     
     @classmethod

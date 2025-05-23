@@ -4,6 +4,7 @@
 import os
 import json
 import uuid
+import logging
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 
@@ -12,6 +13,7 @@ from ..domain.models.user import User
 from ..core.config import get_settings
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 class ConversationService:
     """会话服务"""
@@ -20,6 +22,7 @@ class ConversationService:
         """初始化会话服务"""
         self.conversations_dir = os.path.join(os.getcwd(), "app", "data", "conversations")
         os.makedirs(self.conversations_dir, exist_ok=True)
+        logger.info(f"会话服务初始化，会话目录: {self.conversations_dir}")
     
     def _get_user_conversations_dir(self, user_id: str) -> str:
         """获取用户会话目录"""
@@ -35,11 +38,20 @@ class ConversationService:
         """保存会话到文件"""
         try:
             conversation_path = self._get_conversation_path(conversation.user_id, conversation.id)
+            # 记录会话内容用于调试
+            logger.info(f"保存会话 {conversation.id}，标题: '{conversation.title}'，消息数: {len(conversation.messages)}")
+            
+            # 添加消息内容预览
+            if conversation.messages:
+                last_msg = conversation.messages[-1]
+                last_content = last_msg.content[:100] + "..." if len(last_msg.content) > 100 else last_msg.content
+                logger.info(f"最后一条消息 (角色: {last_msg.role}): {last_content}")
+            
             with open(conversation_path, "w", encoding="utf-8") as f:
                 json.dump(conversation.to_dict(), f, ensure_ascii=False, indent=2)
             return True
         except Exception as e:
-            print(f"保存会话失败: {str(e)}")
+            logger.error(f"保存会话失败: {str(e)}")
             return False
     
     def create_conversation(self, user_id: str, title: Optional[str] = None) -> Conversation:
@@ -154,7 +166,9 @@ class ConversationService:
             print(f"删除会话失败: {str(e)}")
             return False
     
-    def add_message(self, user_id: str, conversation_id: str, role: str, content: str, metadata: Dict[str, Any] = None) -> Optional[Message]:
+    def add_message(self, user_id: str, conversation_id: str, role: str, content: str, 
+                   metadata: Dict[str, Any] = None, thinking: str = None, 
+                   tool_calls: List[Dict[str, Any]] = None) -> Optional[Message]:
         """
         向会话添加消息
         
@@ -164,20 +178,36 @@ class ConversationService:
             role: 消息角色（user/assistant/system）
             content: 消息内容
             metadata: 消息元数据
+            thinking: 思考过程内容
+            tool_calls: 工具调用列表
             
         Returns:
             添加的消息，如果失败则返回None
         """
         conversation = self.get_conversation(user_id, conversation_id)
         if not conversation:
+            logger.warning(f"添加消息失败: 会话 {conversation_id} 不存在")
             return None
+        
+        # 记录添加消息的信息
+        content_preview = content[:100] + "..." if len(content) > 100 else content
+        logger.info(f"向会话 {conversation_id} 添加 {role} 消息: {content_preview}")
+        if metadata:
+            logger.info(f"消息元数据: {metadata}")
+        if thinking:
+            thinking_preview = thinking[:100] + "..." if len(thinking) > 100 else thinking
+            logger.info(f"消息思考内容: {thinking_preview}")
+        if tool_calls and len(tool_calls) > 0:
+            logger.info(f"工具调用数量: {len(tool_calls)}")
         
         message = Message(
             id=str(uuid.uuid4()),
             role=role,
             content=content,
             timestamp=datetime.now(),
-            metadata=metadata or {}
+            metadata=metadata or {},
+            thinking=thinking,
+            tool_calls=tool_calls
         )
         
         conversation.add_message(message)
@@ -186,6 +216,7 @@ class ConversationService:
         if role == "user" and len(conversation.messages) <= 2 and conversation.title == "新会话":
             # 使用消息内容的前20个字符作为标题
             conversation.title = content[:20] + ("..." if len(content) > 20 else "")
+            logger.info(f"更新会话标题为: {conversation.title}")
         
         if self._save_conversation(conversation):
             return message

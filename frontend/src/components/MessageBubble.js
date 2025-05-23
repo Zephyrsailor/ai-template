@@ -119,93 +119,28 @@ const ReferenceItem = styled.div`
 
 // 处理工具调用渲染的组件
 const MessageContent = ({ content, isUser, toolCalls = [] }) => {
-  // 解析内容，保留普通文本，将JSON代码块替换为工具调用组件
-  const parseContent = (content) => {
-    if (!content) return null;
-    
-    // 匹配```json...```格式的代码块
-    const codeBlockRegex = /```json\n([\s\S]*?)\n```/g;
-    const parts = [];
-    let lastIndex = 0;
-    let match;
-    
-    while ((match = codeBlockRegex.exec(content)) !== null) {
-      // 添加工具调用前的文本
-      if (match.index > lastIndex) {
-        parts.push(
-          <MarkdownRenderer
-            key={`text-${lastIndex}`}
-            content={content.substring(lastIndex, match.index)}
-            variant="message"
-            isUser={isUser}
-          />
-        );
-      }
+  return (
+    <>
+      {/* 渲染纯文本内容 */}
+      <MarkdownRenderer
+        content={content}
+        variant="message"
+        isUser={isUser}
+      />
       
-      // 处理JSON代码块
-      try {
-        const jsonContent = match[1];
-        const data = JSON.parse(jsonContent);
-        
-        // 检查是否是工具调用
-        if (data.name || data.tool_name) {
-          // 使用ToolCallDisplay组件
-          parts.push(
+      {/* 渲染工具调用 */}
+      {toolCalls && toolCalls.length > 0 && (
+        <div className="tool-calls-container">
+          {toolCalls.map((tool, index) => (
             <ToolCallDisplay 
-              key={`tool-${match.index}`} 
-              data={data} 
+              key={`tool-${index}`} 
+              data={tool} 
               isUser={isUser} 
             />
-          );
-        } else {
-          // 非工具调用JSON，正常显示
-          parts.push(
-            <MarkdownRenderer
-              key={`code-${match.index}`}
-              content={match[0]}
-              variant="message"
-              isUser={isUser}
-            />
-          );
-        }
-      } catch (e) {
-        // 解析失败，正常显示
-        parts.push(
-          <MarkdownRenderer
-            key={`code-${match.index}`}
-            content={match[0]}
-            variant="message"
-            isUser={isUser}
-          />
-        );
-      }
-      
-      lastIndex = match.index + match[0].length;
-    }
-    
-    // 添加剩余文本
-    if (lastIndex < content.length) {
-      parts.push(
-        <MarkdownRenderer
-          key={`text-end`}
-          content={content.substring(lastIndex)}
-          variant="message"
-          isUser={isUser}
-        />
-      );
-    }
-    
-    return parts;
-  };
-  
-  return isUser ? (
-    <MarkdownRenderer
-      content={content}
-      variant="message"
-      isUser={isUser}
-    />
-  ) : (
-    <>{parseContent(content)}</>
+          ))}
+        </div>
+      )}
+    </>
   );
 };
 
@@ -219,18 +154,53 @@ const MessageBubble = ({
   useWebSearch = false,
   toolCalls = []
 }) => {
-  // 提取知识库引用
+  // 提取知识库引用和网络搜索引用
   const hasReferences = content && content.includes('参考来源:');
+  const hasWebReferences = content && content.includes('网络搜索来源:');
   let mainContent = content;
   let references = null;
+  let webReferences = null;
   
-  // 从内容中提取引用
-  if (hasReferences) {
-    const parts = content.split('参考来源:');
+  // 从内容中提取网络搜索引用
+  if (hasWebReferences) {
+    const parts = content.split('网络搜索来源:');
     mainContent = parts[0];
     if (parts.length > 1) {
-      references = parts[1];
+      // 处理网络搜索引用格式
+      let webRefsRaw = parts[1];
+      // 确保每个链接项在新行
+      webReferences = formatReferences(webRefsRaw);
     }
+  }
+  
+  // 从内容中提取知识库引用
+  if (hasReferences) {
+    const parts = mainContent.split('参考来源:');
+    mainContent = parts[0];
+    if (parts.length > 1) {
+      // 处理知识库引用格式
+      let refsRaw = parts[1];
+      // 确保每个引用项在新行
+      references = formatReferences(refsRaw);
+    }
+  }
+  
+  // 格式化引用，确保每个引用项都正确换行
+  function formatReferences(rawText) {
+    // 使用正则表达式识别引用项模式 [数字] 文本: URL
+    // 并添加适当的Markdown链接格式和换行
+    const referencePattern = /\[(\d+)\]\s+([^:]+):\s*(https?:\/\/[^\s]+)/g;
+    let formatted = rawText.replace(referencePattern, (match, num, title, url) => {
+      // 为每个引用创建Markdown格式的链接
+      return `[${num}] ${title}: [${url}](${url})  \n`;
+    });
+    
+    // 如果没有匹配到引用格式，保持原样但确保每行结束有换行符
+    if (!formatted.includes('[')) {
+      formatted = rawText.split(/\s+/).join(' ').replace(/\.\s+/g, '.\n');
+    }
+    
+    return formatted;
   }
   
   return (
@@ -263,25 +233,38 @@ const MessageBubble = ({
       
       {isUser ? (
         <UserContent>
-          <MessageContent
+          <MarkdownRenderer
             content={mainContent}
+            variant="message"
             isUser={isUser}
           />
         </UserContent>
       ) : (
         <>
-          {/* 使用内容处理组件，保持原始顺序 */}
+          {/* 主内容使用Markdown渲染，并传递工具调用数据 */}
           <MessageContent
             content={mainContent}
             isUser={isUser}
             toolCalls={toolCalls}
           />
           
-          {/* 显示引用 */}
+          {/* 知识库引用使用Markdown渲染 */}
           {hasReferences && references && (
             <ReferencesContainer isUser={isUser}>
               <ReferencesTitle>参考来源:</ReferencesTitle>
-              <ReferenceItem>{references}</ReferenceItem>
+              <ReferenceItem>
+                <MarkdownRenderer content={references} variant="reference" />
+              </ReferenceItem>
+            </ReferencesContainer>
+          )}
+          
+          {/* 网络搜索引用使用Markdown渲染 */}
+          {hasWebReferences && webReferences && (
+            <ReferencesContainer isUser={isUser}>
+              <ReferencesTitle>网络搜索来源:</ReferencesTitle>
+              <ReferenceItem>
+                <MarkdownRenderer content={webReferences} variant="reference" />
+              </ReferenceItem>
             </ReferencesContainer>
           )}
         </>

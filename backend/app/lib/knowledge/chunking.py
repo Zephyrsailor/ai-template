@@ -7,7 +7,8 @@ from typing import List, Dict, Any, Optional
 from llama_index.core.schema import Document, TextNode, NodeRelationship, RelatedNodeInfo
 from llama_index.core.node_parser import SentenceSplitter, NodeParser
 
-from knowledge.model import Node
+# 自己同级目录如何引用？
+from .model import Node
 
 logger = logging.getLogger(__name__)
 

@@ -4,6 +4,8 @@ import { HiOutlineCpuChip } from 'react-icons/hi2';
 import ThinkingBubble from './ThinkingBubble';
 import MessageBubble from './MessageBubble';
 import MarkdownRenderer from './MarkdownRenderer';
+import { RiRobot2Line } from 'react-icons/ri';
+import ToolCallDisplay from './ToolCallDisplay';
 
 const ChatMessages = ({ 
   messages, 
@@ -36,103 +38,179 @@ const ChatMessages = ({
     ('content' in m) && typeof m.content === 'string'
   );
 
-  const renderMessages = () => {
-    if (!messages || messages.length === 0) {
-      // 即使没有消息，如果在思考状态，也显示思考组件
-      if (isThinking && thinking && thinking.trim() !== '') {
-        return (
-          <div key="thinking-bubble-empty" className="flex w-full justify-start">
-            <div className="flex items-start max-w-[85%]">
-              <ThinkingBubble thinking={thinking} isThinking={isThinking} />
-            </div>
-          </div>
-        );
-      }
-      return null;
-    }
-    const safeMessages = filterValidMessages(messages);
-    if (safeMessages.length === 0) {
-      // 没有有效消息但有思考内容时显示思考组件
-      if (isThinking && thinking && thinking.trim() !== '') {
-        return (
-          <div key="thinking-bubble-empty" className="flex w-full justify-start">
-            <div className="flex items-start max-w-[85%]">
-              <ThinkingBubble thinking={thinking} isThinking={isThinking} />
-            </div>
-          </div>
-        );
-      }
-      return null;
-    }
+  // 预处理：合并 tool_result 到 tool_call
+  const preprocessMessages = (messages) => {
+    const toolCallMap = {};
+    const toolResultMap = {};
+    const mergedMessages = [];
 
-    // 查找最后一个用户消息的位置
-    let lastUserMessageIndex = -1;
-    let lastAssistantMessageIndex = -1;
-    
-    for (let i = safeMessages.length - 1; i >= 0; i--) {
-      if (safeMessages[i].role === 'user' && lastUserMessageIndex === -1) {
-        lastUserMessageIndex = i;
+    // 先收集所有 tool_call
+    messages.forEach(msg => {
+      if (msg.type === 'tool_call' && msg.id) {
+        toolCallMap[msg.id] = { ...msg };
       }
-      if (safeMessages[i].role === 'assistant' && lastAssistantMessageIndex === -1) {
-        lastAssistantMessageIndex = i;
-      }
-      if (lastUserMessageIndex !== -1 && lastAssistantMessageIndex !== -1) {
-        break;
-      }
-    }
-
-    // 简化思考组件显示逻辑: 只要在思考状态且有思考内容就显示
-    const shouldShowThinking = isThinking && thinking && thinking.trim() !== '';
-    
-    // 确定思考组件的位置 - 通常在最后一个助手消息之后，如果没有助手消息，则在最后一个用户消息之后
-    const thinkingPosition = lastAssistantMessageIndex !== -1 ? lastAssistantMessageIndex + 1 : lastUserMessageIndex + 1;
-    
-    // 准备渲染消息元素
-    const messageElements = [];
-
-    // 渲染所有消息，并在适当位置插入思考组件
-    safeMessages.forEach((currentMessage, i) => {
-      if (!currentMessage || !currentMessage.role || !currentMessage.content) return;
-      
-      const isUser = currentMessage.role === 'user';
-      
-      // 仅显示内容不为空的助手消息
-      if (!isUser && (!currentMessage.content || currentMessage.content.trim() === '')) {
-        return;
-      }
-
-      // 渲染消息
-      messageElements.push(
-        <div key={`${currentMessage.role}-${i}-${currentMessage.timestamp || 'key'}`} className={`flex w-full ${isUser ? 'justify-end' : 'justify-start'}`}>
-          <div className={`flex items-end gap-2 max-w-[80%] ${isUser ? 'flex-row-reverse' : ''}`}>
-            <div className={`w-9 h-9 rounded-full flex items-center justify-center ${isUser ? 'bg-blue-600' : 'bg-indigo-500'} text-white flex-shrink-0 shadow-md`}>
-              {isUser ? <HiOutlineUserCircle size={22} /> : <HiOutlineCpuChip size={20} />}
-            </div>
-            <div className={`rounded-2xl px-4 py-2 shadow-sm ${isUser ? 'bg-blue-100 text-blue-900' : 'bg-gray-100 text-gray-900'} break-words`}>
-              <MarkdownRenderer content={currentMessage.content} />
-              <div className="text-xs text-gray-400 mt-1 text-right">{currentMessage.timestamp ? new Date(currentMessage.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}</div>
-            </div>
-          </div>
-        </div>
-      );
-      
-      // 如果当前位置是思考组件应该显示的位置，并且需要显示思考组件
-      if (i === thinkingPosition - 1 && shouldShowThinking) {
-        messageElements.push(
-          <div key="thinking-bubble" className="flex w-full justify-start">
-            <div className="flex items-start max-w-[85%]">
-              <ThinkingBubble thinking={thinking} isThinking={isThinking} />
-            </div>
-          </div>
-        );
+      if (msg.type === 'tool_result' && msg.toolCallId) {
+        toolResultMap[msg.toolCallId] = msg;
       }
     });
 
-    return messageElements;
+    // 合并 tool_result 到 tool_call
+    Object.keys(toolCallMap).forEach(id => {
+      if (toolResultMap[id]) {
+        toolCallMap[id] = {
+          ...toolCallMap[id],
+          result: toolResultMap[id].result,
+          error: toolResultMap[id].error
+        };
+      }
+    });
+
+    // 构建最终渲染用的消息列表
+    messages.forEach(msg => {
+      if (msg.type === 'tool_call' && msg.id) {
+        mergedMessages.push(toolCallMap[msg.id]);
+      } else if (msg.type !== 'tool_result') {
+        mergedMessages.push(msg);
+      }
+    });
+    return mergedMessages;
+  };
+
+  const renderMessages = () => {
+    if (!messages || messages.length === 0) {
+      if (isThinking && thinking && thinking.trim() !== '') {
+        return (
+          <div key="thinking-bubble-empty" className="flex w-full justify-start">
+            <div className="flex items-start max-w-[85%]">
+              <ThinkingBubble thinking={thinking} isThinking={isThinking} />
+            </div>
+          </div>
+        );
+      }
+      return null;
+    }
+
+    const safeMessages = filterValidMessages(messages);
+    const processedMessages = preprocessMessages(safeMessages);
+    if (processedMessages.length === 0) {
+      if (isThinking && thinking && thinking.trim() !== '') {
+        return (
+          <div key="thinking-bubble-empty" className="flex w-full justify-start">
+            <div className="flex items-start max-w-[85%]">
+              <ThinkingBubble thinking={thinking} isThinking={isThinking} />
+            </div>
+          </div>
+        );
+      }
+      return null;
+    }
+
+    // 对消息进行分组和排序
+    const groupedMessages = processedMessages.reduce((acc, message) => {
+      const groupKey = message.groupId || message.id;
+      if (!acc[groupKey]) {
+        acc[groupKey] = [];
+      }
+      acc[groupKey].push(message);
+      return acc;
+    }, {});
+
+    // 渲染消息组
+    return Object.entries(groupedMessages).map(([groupId, groupMessages]) => {
+      // 按时间戳排序组内消息
+      const sortedMessages = groupMessages.sort((a, b) => 
+        new Date(a.createdAt) - new Date(b.createdAt)
+      );
+
+      return (
+        <div key={groupId} className="message-group">
+          {sortedMessages.map((message, index) => {
+            const isUser = message.role === 'user';
+            const isAssistant = message.role === 'assistant';
+
+            return (
+              <React.Fragment key={`${message.id}-${index}`}>
+                {isUser && (
+                  <div className="flex w-full justify-end">
+                    <div className="flex items-end gap-2 max-w-[80%] flex-row-reverse">
+                      <div className="w-9 h-9 rounded-full bg-blue-600 flex items-center justify-center text-white flex-shrink-0 shadow-md">
+                        <HiOutlineUserCircle size={22} />
+                      </div>
+                      <div className="rounded-2xl px-4 py-2 bg-blue-100 text-blue-900 break-words">
+                        <MessageBubble
+                          content={message.content}
+                          isUser={true}
+                        />
+                        <div className="text-xs text-gray-400 mt-1 text-right">
+                          {new Date(message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {isAssistant && message.type === 'thinking' && (
+                  <div className="flex items-start gap-3">
+                    <div className="w-9 h-9 rounded-full bg-purple-100 flex items-center justify-center flex-shrink-0">
+                      <RiRobot2Line size={20} className="text-purple-700" />
+                    </div>
+                    <div className="max-w-[85%]">
+                      <ThinkingBubble
+                        thinking={message.thinking}
+                        isThinking={!message.isCompleted}
+                        isCompleted={message.isCompleted}
+                        autoCollapse={true}
+                        isHistorical={message.isCompleted}
+                        preserveContent={false}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {isAssistant && (message.type === 'tool_call' || message.type === 'tool_result') && (
+                  <div className="flex items-start gap-3">
+                    <div className="w-9 h-9 rounded-full bg-purple-100 flex items-center justify-center flex-shrink-0">
+                      <RiRobot2Line size={20} className="text-purple-700" />
+                    </div>
+                    <div className="max-w-[85%]">
+                      <ToolCallDisplay
+                        data={message}
+                        isUser={false}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {isAssistant && message.type === 'content' && (
+                  <div className="flex items-start gap-3">
+                    <div className="w-9 h-9 rounded-full bg-purple-100 flex items-center justify-center flex-shrink-0">
+                      <RiRobot2Line size={20} className="text-purple-700" />
+                    </div>
+                    <div className="max-w-[85%]">
+                      <MessageBubble
+                        content={message.content}
+                        isUser={false}
+                        knowledgeBaseIds={message.knowledgeBaseIds}
+                        mcpServerIds={message.mcpServerIds}
+                        isError={message.isError}
+                        useWebSearch={message.useWebSearch}
+                      />
+                      <div className="text-xs text-gray-400 mt-1 px-1 self-start">
+                        {new Date(message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </React.Fragment>
+            );
+          })}
+        </div>
+      );
+    });
   };
 
   return (
-    <div ref={scrollRef} className="flex-1 overflow-y-auto px-0 py-6 space-y-4 bg-transparent">
+    <div ref={scrollRef} className="flex-1 overflow-y-auto px-0 py-6 space-y-4 bg-transparent" style={{overflowY: 'auto', height: '100%', minHeight: 0}}>
       {renderMessages()}
       <div ref={messagesEndRef} />
     </div>

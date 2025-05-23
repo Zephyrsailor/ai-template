@@ -127,6 +127,7 @@ class Database:
             file_count INTEGER NOT NULL DEFAULT 0,
             document_count INTEGER NOT NULL DEFAULT 0,
             shared_with TEXT,
+            is_public BOOLEAN NOT NULL DEFAULT 0,
             FOREIGN KEY (owner_id) REFERENCES users (id)
         )
         ''')

@@ -12,13 +12,17 @@ class Message:
         role: str,
         content: str,
         timestamp: Optional[datetime] = None,
-        metadata: Optional[Dict[str, Any]] = None
+        metadata: Optional[Dict[str, Any]] = None,
+        thinking: Optional[str] = None,
+        tool_calls: Optional[List[Dict[str, Any]]] = None
     ):
         self.id = id
         self.role = role
         self.content = content
         self.timestamp = timestamp or datetime.now()
         self.metadata = metadata or {}
+        self.thinking = thinking  # 存储思考过程
+        self.tool_calls = tool_calls or []  # 存储工具调用
         
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典"""
@@ -27,7 +31,9 @@ class Message:
             "role": self.role,
             "content": self.content,
             "timestamp": self.timestamp.isoformat(),
-            "metadata": self.metadata
+            "metadata": self.metadata,
+            "thinking": self.thinking,
+            "tool_calls": self.tool_calls
         }
         
     @classmethod

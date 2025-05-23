@@ -11,7 +11,6 @@ from ...domain.schemas.knowledge import (
     QueryRequest, QueryResponse, KnowledgeBaseUpdate, KnowledgeShareRequest
 )
 from ...domain.schemas.base import ApiResponse
-from ...domain.models.knowledge_base import KnowledgeBaseType
 from ...services.knowledge import KnowledgeService
 from ...core.errors import NotFoundException, BadRequestException
 from ..deps import get_knowledge_service, api_response, get_current_user, get_optional_current_user
@@ -255,10 +254,12 @@ async def upload_file(
         
         # 上传文件后自动重建索引，进行向量化处理
         try:
+            # knowledge_service.add_or_update_file_to_kb(kb_id,file_info["id"],current_user)
             knowledge_service.rebuild_index(kb_id, current_user)
         except Exception as e:
             # 如果索引重建失败，记录错误但不影响文件上传结果
             return api_response(
+                code=500,
                 data=file_info, 
                 message=f"文件上传成功，但向量化处理失败: {str(e)}"
             )

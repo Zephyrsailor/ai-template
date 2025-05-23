@@ -277,6 +277,9 @@ export const fetchConversations = async () => {
     // 确保GET请求的路径末尾有斜杠
     const response = await axios.get(`${API_BASE_URL}/conversations/`);
     
+    // 添加详细日志，帮助调试会话数据
+    console.log("原始会话响应数据:", JSON.stringify(response.data, null, 2));
+    
     // 处理后端API返回格式，获取实际数据部分
     if (response.data && response.data.data) {
       // 标准格式是 { code: 200, message: "...", data: [...] }
@@ -296,6 +299,37 @@ export const fetchConversations = async () => {
       // 可以触发登出或提示用户重新登录
     }
     return { success: false, data: [], message: `获取会话失败: ${error.message}` };
+  }
+};
+
+/**
+ * 获取会话详情
+ * @param {string} conversationId 会话ID
+ * @returns {Promise<Object>} 会话详情
+ */
+export const getConversationDetails = async (conversationId) => {
+  try {
+    const response = await axios.get(`${API_BASE_URL}/conversations/${conversationId}?user_specific=true`);
+    console.log("会话详情原始响应:", response.data);
+    
+    // 确保响应格式正确处理
+    if (response.data && response.data.data) {
+      // 标准格式是 { code: 200, message: "...", data: {...} }
+      return { success: true, data: response.data.data, message: response.data.message };
+    } else if (response.data && response.data.id) {
+      // 如果直接返回会话对象
+      return { success: true, data: response.data, message: "获取成功" };
+    } else {
+      console.warn('会话详情响应格式不正确:', response.data);
+      return { success: false, data: {}, message: "获取会话详情失败：响应格式不正确" };
+    }
+  } catch (error) {
+    console.error('获取会话详情失败:', error);
+    return { 
+      success: false, 
+      data: {}, 
+      message: `获取会话详情失败: ${error.message}` 
+    };
   }
 };
 

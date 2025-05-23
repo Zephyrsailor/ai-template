@@ -10,6 +10,8 @@ class MessageCreate(BaseModel):
     role: str = Field(..., description="消息角色，如user、assistant、system")
     content: str = Field(..., description="消息内容")
     metadata: Optional[Dict[str, Any]] = Field(None, description="消息元数据")
+    thinking: Optional[str] = Field(None, description="思考过程")
+    tool_calls: Optional[List[Dict[str, Any]]] = Field(None, description="工具调用列表")
 
 class MessageResponse(BaseModel):
     """消息响应"""
@@ -18,6 +20,8 @@ class MessageResponse(BaseModel):
     content: str = Field(..., description="消息内容")
     timestamp: datetime = Field(..., description="消息时间戳")
     metadata: Dict[str, Any] = Field({}, description="消息元数据")
+    thinking: Optional[str] = Field(None, description="思考过程")
+    tool_calls: List[Dict[str, Any]] = Field([], description="工具调用列表")
 
 class ConversationCreate(BaseModel):
     """创建会话请求"""

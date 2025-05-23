@@ -208,7 +208,22 @@ const Header = ({
 }) => {
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
-  
+  const userMenuRef = React.useRef(null);
+
+  // 新增：点击外部关闭菜单
+  React.useEffect(() => {
+    if (!isUserMenuOpen) return;
+    const handleClickOutside = (event) => {
+      if (userMenuRef.current && !userMenuRef.current.contains(event.target)) {
+        setIsUserMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isUserMenuOpen]);
+
   const handleDropdownToggle = () => {
     setIsDropdownOpen(!isDropdownOpen);
   };
@@ -245,6 +260,7 @@ const Header = ({
       // 如果没有传入登出回调，则直接刷新页面
       window.location.reload();
     }
+    setIsUserMenuOpen(false); // 新增：点击后关闭菜单
   };
   
   // 获取用户头像显示文本
@@ -253,6 +269,12 @@ const Header = ({
     return user.username.charAt(0).toUpperCase();
   };
   
+  // 新增：点击设置后关闭菜单
+  const handleOpenSettings = () => {
+    if (onOpenSettings) onOpenSettings();
+    setIsUserMenuOpen(false);
+  };
+
   return (
     <header className="flex items-center justify-between py-3 px-4 bg-white border-b border-gray-100 shadow-sm z-10 w-full">
       {/* 左侧部分 - 空白或者可以放置其他元素 */}
@@ -275,14 +297,14 @@ const Header = ({
       {/* 右侧部分 - 只保留用户信息，移除其他按钮 */}
       <div className="flex items-center gap-3">
         {/* 用户信息 - 始终显示，不再进行条件渲染 */}
-        <div className="relative">
+        <div className="relative" ref={userMenuRef}>
           <UserContainer onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}>
             <UserAvatar>{getAvatarText()}</UserAvatar>
             <UserName>{user.username}</UserName>
           </UserContainer>
           {isUserMenuOpen && (
             <UserMenu isOpen={true}>
-              <UserMenuItem onClick={onOpenSettings}>
+              <UserMenuItem onClick={handleOpenSettings}>
                 <FaCog /> 设置
               </UserMenuItem>
               <UserMenuItem onClick={handleLogout}>
