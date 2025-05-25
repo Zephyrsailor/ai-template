@@ -1,7 +1,7 @@
 """MCP会话管理器，管理MCP客户端会话的生命周期。"""
 
 import asyncio
-from datetime import timedelta
+from datetime import timedelta, datetime
 from typing import Any, Dict, List, Optional, TypeVar
 from contextlib import AsyncExitStack
 
@@ -35,11 +35,36 @@ class ServerSession:
         self.capabilities = capabilities
         self.healthy = True
         self.last_error: Optional[Exception] = None
+        self.consecutive_failures = 0
+        self.last_failure_time: Optional[datetime] = None
+        self.total_failures = 0
     
     def mark_unhealthy(self, error: Exception) -> None:
         """标记会话为不健康状态。"""
         self.healthy = False
         self.last_error = error
+        self.consecutive_failures += 1
+        self.total_failures += 1
+        self.last_failure_time = datetime.now()
+    
+    def mark_healthy(self) -> None:
+        """标记会话为健康状态。"""
+        self.healthy = True
+        self.consecutive_failures = 0
+        self.last_error = None
+    
+    def should_retry(self, max_consecutive_failures: int = 5) -> bool:
+        """检查是否应该重试连接"""
+        if self.consecutive_failures >= max_consecutive_failures:
+            return False
+        
+        # 如果最近失败，等待一段时间再重试
+        if self.last_failure_time:
+            cooldown_period = timedelta(minutes=min(5, self.consecutive_failures))
+            if datetime.now() - self.last_failure_time < cooldown_period:
+                return False
+        
+        return True
 
 
 class SessionManager:
@@ -85,7 +110,7 @@ class SessionManager:
     
     async def get_session(self, server_name: str) -> ClientSession:
         """
-        获取指定服务器的会话，如果不存在则创建。
+        获取指定服务器的会话，如果不存在或不健康则创建新的。
         
         Args:
             server_name: 服务器名称
@@ -95,12 +120,32 @@ class SessionManager:
             
         Raises:
             ValueError: 如果服务器配置无效
-            ConnectionError: 如果连接失败
+            ConnectionError: 如果连接失败或达到最大失败次数
         """
         async with self.session_lock:
-            # 检查是否已有会话
-            if server_name in self.sessions and self.sessions[server_name].healthy:
-                return self.sessions[server_name].session
+            # 检查是否已有健康的会话
+            if server_name in self.sessions:
+                session_info = self.sessions[server_name]
+                if session_info.healthy:
+                    return session_info.session
+                
+                # 会话不健康，检查是否应该重试
+                if not session_info.should_retry():
+                    self.logger.warning(
+                        f"服务器'{server_name}'连续失败{session_info.consecutive_failures}次，"
+                        f"等待冷却期结束后再重试"
+                    )
+                    raise ConnectionError(
+                        f"服务器'{server_name}'暂时不可用，"
+                        f"连续失败{session_info.consecutive_failures}次"
+                    )
+                
+                # 清理不健康的会话
+                self.logger.info(f"清理服务器'{server_name}'的不健康会话，准备重新连接")
+                try:
+                    await self.close_session(server_name)
+                except Exception as e:
+                    self.logger.warning(f"清理会话时出错: {e}")
             
             # 创建新会话
             return await self._create_and_initialize_session(server_name)
@@ -170,17 +215,17 @@ class SessionManager:
         operation: str,
         method_name: str,
         method_args: Optional[Dict[str, Any]] = None,
-        max_retries: int = 1
+        max_retries: int = 3  # 增加默认重试次数
     ) -> Any:
         """
-        在指定服务器上执行操作，支持重试。
+        在指定服务器上执行操作，支持智能重试。
         
         Args:
             server_name: 服务器名称
             operation: 操作名称（用于日志）
             method_name: 要调用的方法名
             method_args: 方法参数
-            max_retries: 最大重试次数
+            max_retries: 最大重试次数（默认3次）
             
         Returns:
             操作结果
@@ -192,6 +237,16 @@ class SessionManager:
         retries = 0
         last_error = None
         
+        # 检查是否有现有的不健康会话，且不应重试
+        if server_name in self.sessions:
+            session_info = self.sessions[server_name]
+            if not session_info.healthy and not session_info.should_retry():
+                self.logger.warning(
+                    f"服务器'{server_name}'连续失败次数过多({session_info.consecutive_failures})，"
+                    f"跳过重试直到冷却期结束"
+                )
+                raise ConnectionError(f"服务器'{server_name}'暂时不可用，已达到最大连续失败次数")
+        
         while retries <= max_retries:
             try:
                 # 获取会话（可能是新的，如果前一个失败）
@@ -201,6 +256,14 @@ class SessionManager:
                 method = getattr(session, method_name)
                 result = await method(**method_args)
                 
+                # 成功后标记会话为健康
+                if server_name in self.sessions:
+                    self.sessions[server_name].mark_healthy()
+                
+                # 如果这是重试后的成功，记录恢复日志
+                if retries > 0:
+                    self.logger.info(f"服务器'{server_name}'在第{retries+1}次尝试后成功恢复")
+                
                 return result
                 
             except Exception as e:
@@ -208,7 +271,8 @@ class SessionManager:
                 last_error = e
                 
                 self.logger.warning(
-                    f"在服务器'{server_name}'上执行操作'{operation}'失败 (尝试 {retries}/{max_retries+1}): {e}"
+                    f"在服务器'{server_name}'上执行操作'{operation}'失败 "
+                    f"(尝试 {retries}/{max_retries+1}): {e}"
                 )
                 
                 # 标记会话为不健康
@@ -219,10 +283,15 @@ class SessionManager:
                 if retries > max_retries:
                     break
                 
-                # 等待一小段时间再重试
-                await asyncio.sleep(min(1.0, 0.5 * retries))
+                # 指数退避重试间隔，最大30秒
+                delay = min(30.0, 2.0 ** retries + 0.5 * retries)
+                self.logger.info(f"等待{delay:.1f}秒后重试...")
+                await asyncio.sleep(delay)
         
         # 所有重试都失败
+        self.logger.error(
+            f"服务器'{server_name}'上的操作'{operation}'在{max_retries+1}次尝试后仍然失败"
+        )
         raise last_error or Exception(f"在服务器'{server_name}'上执行操作'{operation}'失败")
     
     def get_capabilities(self, server_name: str) -> Optional[ServerCapabilities]:

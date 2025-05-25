@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { IoSend } from 'react-icons/io5';
+import { IoSend, IoStop } from 'react-icons/io5';
 import { IoMdAttach } from 'react-icons/io';
 import { HiMicrophone } from 'react-icons/hi';
 import { FaGlobe } from 'react-icons/fa';
@@ -39,7 +39,9 @@ const ChatInput = ({
   onSendMessage, 
   isDisabled = false,
   placeholder = '输入您的问题...',
-  isLoading = false 
+  isLoading = false,
+  isStreaming = false,
+  onStopGeneration
 }) => {
   const [message, setMessage] = useState('');
   const [selectedKbs, setSelectedKbs] = useState([]);
@@ -166,15 +168,28 @@ const ChatInput = ({
               <div className="flex items-center">
                 <span className="text-xs text-gray-400 mr-3">Enter 发送, Shift+Enter 换行</span>
                 
+                {/* 停止按钮 - 在加载或流式响应时显示 */}
+                {(isLoading || isStreaming) && onStopGeneration && (
+                  <button
+                    type="button"
+                    onClick={onStopGeneration}
+                    className="p-2.5 rounded-lg transition-all duration-200 text-white bg-red-600 hover:bg-red-700 mr-2"
+                    title="停止生成"
+                  >
+                    <IoStop size={18} />
+                  </button>
+                )}
+                
+                {/* 发送按钮 */}
                 <button
                   type="submit"
                   className={`p-2.5 rounded-lg transition-all duration-200 ${
-                    message.trim() && !isDisabled && !isLoading
+                    message.trim() && !isDisabled && !isLoading && !isStreaming
                       ? 'text-white bg-gray-700 hover:bg-gray-800' 
                       : 'text-gray-400 bg-gray-100 cursor-not-allowed'
                   }`}
-                  disabled={!message.trim() || isDisabled || isLoading}
-                  title="发送消息"
+                  disabled={!message.trim() || isDisabled || isLoading || isStreaming}
+                  title={(isLoading || isStreaming) ? "正在生成中..." : "发送消息"}
                 >
                   <IoSend size={18} />
                 </button>

@@ -68,12 +68,13 @@ class MCPHub:
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         await self.shutdown()
     
-    async def initialize(self, server_names: Optional[List[str]] = None) -> 'MCPHub':
+    async def initialize(self, server_names: Optional[List[str]] = None, user_id: Optional[str] = None) -> 'MCPHub':
         """
         初始化MCP集线器及其所有组件
         
         Args:
             server_names: 要连接的服务器名称列表，默认为所有配置的服务器
+            user_id: 用户ID，用于过滤只属于该用户的服务器
         
         Returns:
             MCPHub实例，便于链式调用
@@ -82,13 +83,17 @@ class MCPHub:
             return self
             
         if server_names is None:
-            server_names = self.config_provider.get_all_server_names()
+            # 获取用户特定的服务器名称
+            if user_id:
+                server_names = self.config_provider.get_user_server_names(user_id)
+            else:
+                server_names = self.config_provider.get_all_server_names()
             
         if not server_names:
-            self.logger.warning("未找到任何服务器配置")
+            self.logger.warning(f"未找到任何服务器配置 (用户: {user_id or '全局'})")
             return self
             
-        self.logger.info(f"初始化MCP集线器，连接到服务器: {', '.join(server_names)}")
+        self.logger.info(f"初始化MCP集线器，连接到服务器: {', '.join(server_names)} (用户: {user_id or '全局'})")
         
         # 并行发现功能
         discovery_tasks = [
@@ -186,4 +191,55 @@ class MCPHub:
         Returns:
             资源内容
         """
-        return await self.resource_manager.get_resource(resource_uri) 
+        return await self.resource_manager.get_resource(resource_uri)
+
+    async def reload_servers(self, server_names: Optional[List[str]] = None, user_id: Optional[str] = None) -> None:
+        """
+        重新加载服务器配置和功能发现（用于增删改 server 后热更新）
+        Args:
+            server_names: 指定要刷新的服务器名列表，默认全部
+            user_id: 用户ID，用于只重载该用户的服务器
+        """
+        self.logger.info(f"重新加载MCP服务器配置和功能发现 (用户: {user_id or '全局'})")
+        # 重新加载配置
+        self.config_provider.reload()
+        # 重新初始化连接和会话管理器
+        self.connection_manager = ConnectionManager(self.config_provider, self.logger)
+        self.session_manager = SessionManager(self.config_provider, self.connection_manager, self.logger)
+        # 刷新功能管理器
+        self.tool_manager = ToolManager(self.session_manager, self.cache, self.logger)
+        self.prompt_manager = PromptManager(self.session_manager, self.cache, self.logger)
+        self.resource_manager = ResourceManager(self.session_manager, self.cache, self.logger)
+        # 重新发现
+        await self.initialize(server_names, user_id)
+
+    async def get_server_status(self, server_name: str) -> Dict[str, Any]:
+        """
+        获取单个服务器的健康/激活/连接状态
+        Returns: {"name":..., "active":..., "connected":..., "healthy":...}
+        """
+        config = self.config_provider.get_server_config(server_name)
+        if not config:
+            return {"name": server_name, "active": False, "connected": False, "healthy": False}
+        active = config.get("active", True)
+        # 连接状态
+        connected = self.connection_manager.is_connected(server_name)
+        # 健康检查（可扩展为实际ping）
+        healthy = connected # 简化：已连接即健康
+        return {"name": server_name, "active": active, "connected": connected, "healthy": healthy}
+
+    async def list_server_statuses(self, server_names: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+        """
+        获取服务器的健康/激活/连接状态
+        
+        Args:
+            server_names: 要查询状态的服务器名称列表，如果为None则查询所有服务器
+            
+        Returns:
+            List[{"name":..., "active":..., "connected":..., "healthy":...}]
+        """
+        # 如果没有指定服务器名称，则获取所有配置的服务器
+        if server_names is None:
+            server_names = self.config_provider.get_all_server_names()
+            
+        return [await self.get_server_status(name) for name in server_names] 

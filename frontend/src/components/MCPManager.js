@@ -5,19 +5,20 @@ import {
   ListItemText, ListItemSecondaryAction, IconButton, Divider, 
   Paper, CircularProgress, Grid, Chip, Dialog, DialogTitle,
   DialogContent, DialogContentText, DialogActions, Alert,
-  Card, CardContent, InputAdornment, Collapse, 
-  Tooltip, Radio, RadioGroup, FormControlLabel, FormControl,
+  Card, CardContent, Tooltip, Radio, RadioGroup, FormControlLabel, FormControl,
   FormLabel, Tab, Tabs
 } from '@mui/material';
 import { 
   Add, Delete, Refresh, ArrowBack, Edit, Check,
-  PlayArrow, Settings, PowerSettingsNew
+  PlayArrow, PowerSettingsNew
 } from '@mui/icons-material';
+import { fetchMCPServers, createMCPServer, updateMCPServer, testMCPServerConnection, fetchMCPServerStatuses } from '../api/index';
 
 // MCP服务器管理组件
 const MCPManager = () => {
   // 状态管理
   const [mcpServers, setMcpServers] = useState([]);
+  const [serverStatuses, setServerStatuses] = useState([]);
   const [selectedServer, setSelectedServer] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -47,8 +48,8 @@ const MCPManager = () => {
     setError(null);
     
     try {
-      const response = await axios.get('/api/mcp/servers/');
-      setMcpServers(response.data.data || []);
+      const response = await fetchMCPServers(false);
+      setMcpServers(response.data || []);
     } catch (err) {
       setError('加载MCP服务器列表失败：' + (err.response?.data?.detail || err.message));
     } finally {
@@ -56,10 +57,38 @@ const MCPManager = () => {
     }
   };
 
+  // 加载服务器状态
+  const loadServerStatuses = async () => {
+    try {
+      const response = await fetchMCPServerStatuses();
+      // 确保 data 是数组
+      const statusData = response.data?.data || response.data || [];
+      setServerStatuses(Array.isArray(statusData) ? statusData : []);
+    } catch (err) {
+      console.error('加载MCP服务器状态失败：', err.response?.data?.detail || err.message);
+      setServerStatuses([]); // 出错时设置为空数组
+    }
+  };
+
   // 初始加载
   useEffect(() => {
     loadMcpServers();
   }, []);
+
+  // 定时轮询服务器状态
+  useEffect(() => {
+    if (mcpServers.length > 0) {
+      // 首次加载状态
+      loadServerStatuses();
+      
+      // 设置定时器，每10秒刷新一次状态
+      const statusInterval = setInterval(() => {
+        loadServerStatuses();
+      }, 10000);
+
+      return () => clearInterval(statusInterval);
+    }
+  }, [mcpServers]);
 
   // 选择服务器
   const selectServer = (server) => {
@@ -152,13 +181,14 @@ const MCPManager = () => {
         active: true
       };
       
-      const response = await axios.post('/api/mcp/servers/', serverData);
+      const response = await createMCPServer(serverData);
       
       if (response.data) {
         setSuccess('MCP服务器创建成功');
         clearForm();
         setCreateMode(false);
         loadMcpServers();
+        loadServerStatuses();
       } else {
         setError('创建MCP服务器失败');
       }
@@ -172,15 +202,12 @@ const MCPManager = () => {
   // 更新MCP服务器
   const updateServer = async () => {
     if (!selectedServer) return;
-    
     if (!serverName.trim()) {
       setError('服务器名称不能为空');
       return;
     }
-    
     setLoading(true);
     setError(null);
-    
     try {
       // 处理环境变量字符串转换为对象
       const envObject = {};
@@ -194,11 +221,9 @@ const MCPManager = () => {
           }
         });
       }
-      
       // 处理参数字符串转换为数组
       const argsArray = serverArgs.trim() ? 
         serverArgs.trim().split('\n').filter(arg => arg.trim()) : [];
-      
       const serverData = {
         name: serverName.trim(),
         description: serverDescription.trim(),
@@ -208,14 +233,14 @@ const MCPManager = () => {
         args: argsArray,
         env: envObject
       };
-      
-      const response = await axios.put(`/api/mcp/servers/${selectedServer.id}`, serverData);
-      
-      if (response.data) {
+      const response = await updateMCPServer(selectedServer.id, serverData);
+      const updatedServer = response.data?.data || response.data;
+      if (updatedServer) {
         setSuccess('MCP服务器更新成功');
         setEditMode(false);
         loadMcpServers();
-        selectServer(response.data.data);
+        loadServerStatuses();
+        selectServer(updatedServer);
       } else {
         setError('更新MCP服务器失败');
       }
@@ -234,10 +259,11 @@ const MCPManager = () => {
     setError(null);
     
     try {
-      await axios.delete(`/api/mcp/servers/${serverToDelete.id}`);
+      await axios.delete(`/api/mcp/servers/${serverToDelete.id}?user_specific=true`);
       setSuccess('MCP服务器删除成功');
       setDeleteDialogOpen(false);
       loadMcpServers();
+      loadServerStatuses();
       
       if (selectedServer && selectedServer.id === serverToDelete.id) {
         setSelectedServer(null);
@@ -259,9 +285,9 @@ const MCPManager = () => {
     setError(null);
     
     try {
-      const response = await axios.post(`/api/mcp/servers/${server.id}/test`);
+      const response = await testMCPServerConnection(server.id);
 
-      if (response.data.data.success) {
+      if (response.data.success) {
         setSuccess('连接测试成功！');
       } else {
         setError('连接测试失败：' + response.data.message);
@@ -279,7 +305,7 @@ const MCPManager = () => {
     setError(null);
     
     try {
-      const response = await axios.put(`/api/mcp/servers/${server.id}`, {
+      const response = await updateMCPServer(server.id, {
         ...server,
         active
       });
@@ -287,6 +313,7 @@ const MCPManager = () => {
       if (response.data) {
         setSuccess(`MCP服务器已${active ? '启用' : '禁用'}`);
         loadMcpServers();
+        loadServerStatuses();
         
         if (selectedServer && selectedServer.id === server.id) {
           selectServer(response.data);
@@ -310,6 +337,80 @@ const MCPManager = () => {
   // Tab切换处理
   const handleTabChange = (event, newValue) => {
     setActiveTab(newValue);
+  };
+
+  // 获取服务器状态
+  const getServerStatus = (serverName) => {
+    return serverStatuses.find(status => status.name === serverName) || 
+           { active: false, connected: false, healthy: false };
+  };
+
+  // 状态指示器组件
+  const StatusIndicator = ({ status }) => {
+    const { active, connected, healthy } = status;
+    
+    const getStatusColor = () => {
+      if (healthy) return '#4caf50'; // 绿色
+      if (connected) return '#ff9800'; // 橙色
+      return '#f44336'; // 红色
+    };
+    
+    const getStatusText = () => {
+      if (healthy) return '健康';
+      if (connected) return '已连接';
+      return '未连接';
+    };
+    
+    return (
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+        <Box
+          sx={{
+            width: 8,
+            height: 8,
+            borderRadius: '50%',
+            backgroundColor: getStatusColor(),
+            flexShrink: 0
+          }}
+          title={getStatusText()}
+        />
+        <Typography 
+          variant="caption" 
+          sx={{ 
+            color: active ? 'success.main' : 'text.disabled',
+            fontSize: '0.75rem'
+          }}
+        >
+          {active ? '激活' : '未激活'}
+        </Typography>
+      </Box>
+    );
+  };
+
+  // 状态统计组件
+  const StatusSummary = () => {
+    const totalServers = mcpServers.length;
+    const activeServers = mcpServers.filter(server => server.active).length;
+    const onlineServers = serverStatuses.filter(status => status.healthy || status.connected).length;
+    
+    return (
+      <Paper sx={{ p: 2, mb: 2 }}>
+        <Typography variant="subtitle2" sx={{ mb: 1 }}>服务器状态概览</Typography>
+        <Box sx={{ display: 'flex', gap: 3 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+            <Typography variant="body2" color="text.secondary">总计:</Typography>
+            <Chip label={totalServers} size="small" variant="outlined" />
+          </Box>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+            <Typography variant="body2" color="text.secondary">激活:</Typography>
+            <Chip label={activeServers} size="small" color="primary" />
+          </Box>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+            <Typography variant="body2" color="text.secondary">在线:</Typography>
+            <Chip label={onlineServers} size="small" color="success" />
+          </Box>
+        </Box>
+      </Paper>
+    );
   };
 
   // 渲染主界面
@@ -420,12 +521,18 @@ const MCPManager = () => {
                 <Typography variant="h6">可用MCP服务器</Typography>
                 <Button 
                   startIcon={<Refresh />}
-                  onClick={loadMcpServers}
+                  onClick={() => {
+                    loadMcpServers();
+                    loadServerStatuses();
+                  }}
                   disabled={loading}
                 >
                   刷新
                 </Button>
               </Box>
+              
+              {/* 状态概览 */}
+              {mcpServers.length > 0 && <StatusSummary />}
               
               {mcpServers.length === 0 ? (
                 <Paper sx={{ p: 3, textAlign: 'center' }}>
@@ -443,7 +550,12 @@ const MCPManager = () => {
                         selected={selectedServer?.id === server.id}
                       >
                         <ListItemText 
-                          primary={server.name} 
+                          primary={
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                              {server.name}
+                              <StatusIndicator status={getServerStatus(server.name)} />
+                            </Box>
+                          } 
                           secondary={
                             <React.Fragment>
                               <Typography component="span" variant="body2" color="textPrimary">

@@ -27,9 +27,9 @@ async def get_api_user(user_info: Dict[str, Any] = Depends(verify_api_key)):
     """获取API用户信息"""
     return user_info
 
-async def get_mcp_service_api() -> MCPService:
+def get_mcp_service_api() -> MCPService:
     """获取MCP服务依赖（API版本）"""
-    return await get_mcp_service()
+    return get_mcp_service()
 
 def get_knowledge_service_api() -> KnowledgeService:
     """获取知识库服务依赖（API版本）"""

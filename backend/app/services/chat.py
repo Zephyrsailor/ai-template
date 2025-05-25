@@ -41,17 +41,27 @@ class ChatService:
 
     async def chat_stream(
         self,
-        request: ChatRequest
+        request: ChatRequest,
+        stop_key: Optional[str] = None
     ) -> AsyncGenerator[StreamEvent, None]:
         """
         使用 多轮会话模式进行流式聊天，返回事件流
         
         Args:
             request: ChatRequest 请求对象
+            stop_key: 停止信号的key，用于检查是否需要停止生成
             
         Returns:
             事件流生成器
         """
+        
+        # 导入停止信号检查函数
+        def is_stopped() -> bool:
+            if not stop_key:
+                return False
+            # 这里需要从路由模块导入停止信号
+            from ..api.routes.chat import _stop_signals
+            return _stop_signals.get(stop_key, False)
         
         # 1. 处理知识库查询
         knowledge_context = None
@@ -68,6 +78,10 @@ class ChatService:
             except Exception as e:
                 # 记录错误但继续，不让知识库错误影响整体功能
                 print(f"知识库查询失败: {str(e)}")
+        
+        # 检查停止信号
+        if is_stopped():
+            return
         
         # 2. 处理网络搜索，当用户消息中包含搜索或联网关键词时
         web_search_context = None
@@ -96,6 +110,10 @@ class ChatService:
                 logger.error(f"网络搜索失败: {str(e)}")
                 # 搜索失败不影响主流程
         
+        # 检查停止信号
+        if is_stopped():
+            return
+        
         # 3. 处理MCP服务器和工具
         tools = None
         mcp_servers = []
@@ -103,15 +121,15 @@ class ChatService:
             try:
                 # 获取MCP服务器信息
                 for server_id in request.mcp_server_ids:
-                    server = self.mcp_service.get_server(server_id)
+                    server = self.mcp_service.get_user_server(self.current_user.id, server_id)
                     if server:
                         mcp_servers.append(server)
                 
                 # 启用工具调用
                 if mcp_servers:
                     request.use_tools = True
-                    # 获取工具列表
-                    tools = await self.mcp_service.get_tools(mcp_servers)
+                    # 获取指定服务器的工具列表
+                    tools = await self.mcp_service.get_tools_for_servers(self.current_user.id, request.mcp_server_ids)
             except Exception as e:
                 # 记录错误并返回错误信息
                 print(f"MCP服务器/工具处理失败: {str(e)}")
@@ -119,6 +137,11 @@ class ChatService:
                     status_code=500,
                     detail=f"MCP服务器/工具处理失败: {str(e)}"
                 )
+        
+        # 检查停止信号
+        if is_stopped():
+            return
+            
         # 创建或获取会话
         conversation = None
         conversation_id = request.conversation_id
@@ -175,6 +198,10 @@ class ChatService:
         
         try:
             while not has_final_answer and iteration < max_iterations:
+                # 检查停止信号
+                if is_stopped():
+                    logger.info(f"聊天被停止: {stop_key}")
+                    return
 
                 has_tool_call = False
                 tool_call_json = None
@@ -191,6 +218,11 @@ class ChatService:
                     max_tokens=request.max_tokens,
                     stream=request.stream
                 ):
+                    # 在每个事件前检查停止信号
+                    if is_stopped():
+                        logger.info(f"聊天被停止: {stop_key}")
+                        return
+                        
                     # 收集思考内容
                     if event.type == EventType.THINKING:
                         collected_thinking += event.data
@@ -217,6 +249,11 @@ class ChatService:
                 messages.append({"role": "assistant", "content": collected_content})
                 # 构建本轮 prompt，临时加入 observation 但不存历史
                 if has_tool_call:
+                    # 检查停止信号
+                    if is_stopped():
+                        logger.info(f"聊天被停止: {stop_key}")
+                        return
+                        
                     # 执行工具调用并获取结果
                     tool_results = await self._execute_tool_calls(tool_call_json)
                     # 收集工具调用信息
@@ -234,6 +271,10 @@ class ChatService:
                         logger.warning(f"处理工具调用数据时出错: {str(e)}")
                     # 向用户显示工具调用结果
                     for result in tool_results:
+                        # 检查停止信号
+                        if is_stopped():
+                            logger.info(f"聊天被停止: {stop_key}")
+                            return
                         yield StreamEvent(type=result.type, data=result.data)
                     # 构建观察结果并临时加入 prompt，不存历史
                     observation = self._build_observation_message(tool_results)
@@ -245,8 +286,8 @@ class ChatService:
                     has_final_answer = True
                 # 继续对话循环
                 iteration += 1
-                # 保存助手回复到会话
-                if self.current_user and self.conversation_service:
+                # 保存助手回复到会话（只有在没有停止信号时才保存）
+                if self.current_user and self.conversation_service and not is_stopped():
                     ai_message_metadata = {}
                     if request.model_id:
                         ai_message_metadata["model_id"] = request.model_id
@@ -265,11 +306,12 @@ class ChatService:
                         tool_calls=collected_tool_calls
                     )
         except Exception as e:
-            logger.error(f"聊天处理错误: {str(e)}")
-            raise HTTPException(
-                status_code=500,
-                detail=f"聊天处理错误: {str(e)}"
-            )
+            logger.error(f"聊天处理错误: {str(e)}", exc_info=True)
+            # 发送错误事件给前端，而不是抛出异常
+            yield StreamEvent(type=EventType.ERROR, data={
+                "error": f"聊天处理失败: {str(e)}",
+                "stage": "chat_processing"
+            })
         if request.conversation_id == None:
             yield StreamEvent(type=EventType.CONVERSATION_CREATED, data=conversation_id)
         # 如果使用了知识库，在最后添加引用信息
@@ -428,11 +470,16 @@ class ChatService:
             normalized_tool_calls = self._normalize_tool_calls(tool_calls)
             
             if not normalized_tool_calls:
-                results.append(ModelEvent(EventType.ERROR, {"error": "工具调用JSON格式不正确"}))
+                logger.warning(f"工具调用格式不正确: {tool_call_json[:200]}...")
+                error_tool_data = {
+                    "id": "format_error",
+                    "name": "format_validator",
+                    "arguments": {},
+                    "result": {"content": [{"type": "text", "text": "工具调用格式不正确"}]},
+                    "error": "工具调用JSON格式不正确"
+                }
+                results.append(ModelEvent(EventType.TOOL_RESULT, error_tool_data))
                 return results
-            
-            # 准备工具调用任务
-            await self.mcp_service._ensure_initialized()
             
             # 创建工具调用任务列表
             tool_tasks = []
@@ -444,9 +491,9 @@ class ChatService:
                 if not action_name:
                     continue
                 
-                # 创建任务
+                # 创建任务，使用MCP Service的工具调用方法
                 task = asyncio.create_task(
-                    self._safe_call_tool(self.mcp_service, action_name, action_input)
+                    self._safe_call_tool(action_name, action_input)
                 )
                 tool_tasks.append((task, action_name, action_input, action_id))
             
@@ -466,22 +513,53 @@ class ChatService:
                         "result": json_result
                     }
                     
-                    # 添加错误信息(如果有)
+                    # 检查是否有错误
+                    has_error = False
+                    error_message = ""
+                    
+                    # 检查多种错误格式
                     if isinstance(result, dict) and "error" in result:
-                        tool_data["error"] = result["error"]
-                    elif hasattr(result, "isError") and result.isError and hasattr(result, "message"):
-                        tool_data["error"] = result.message
+                        has_error = True
+                        error_message = result["error"]
+                    elif hasattr(result, "isError") and result.isError:
+                        has_error = True
+                        if hasattr(result, "message"):
+                            error_message = result.message
+                        else:
+                            error_message = "工具执行出错"
+                    elif isinstance(json_result, dict) and json_result.get("isError"):
+                        has_error = True
+                        error_message = "工具执行失败"
+                    
+                    if has_error:
+                        tool_data["error"] = error_message
                     
                     # 添加工具调用事件
                     results.append(ModelEvent(EventType.TOOL_RESULT, tool_data))
                     
                 except Exception as e:
-                    error_msg = f"工具 '{action_name}' 执行错误: {str(e)}"
-                    results.append(ModelEvent(EventType.ERROR, {"error": error_msg}))
+                    logger.error(f"工具 '{action_name}' 执行异常: {str(e)}", exc_info=True)
+                    # 创建错误的工具结果事件，而不是ERROR事件
+                    error_tool_data = {
+                        "id": action_id,
+                        "name": action_name,
+                        "arguments": action_input,
+                        "result": {"content": [{"type": "text", "text": f"执行失败: {str(e)}"}]},
+                        "error": f"工具 '{action_name}' 执行错误: {str(e)}"
+                    }
+                    results.append(ModelEvent(EventType.TOOL_RESULT, error_tool_data))
             
-        except json.JSONDecodeError:
-            error_msg = f"工具调用JSON解析失败: {tool_call_json}"
-            results.append(ModelEvent(EventType.ERROR, {"error": error_msg}))
+        except json.JSONDecodeError as e:
+            logger.error(f"工具调用JSON解析失败: {str(e)}, 数据: {tool_call_json[:200]}...")
+            # 返回解析错误的工具结果
+            error_tool_data = {
+                "id": "parse_error",
+                "name": "json_parser",
+                "arguments": {},
+                "result": {"content": [{"type": "text", "text": f"JSON解析失败: {str(e)}"}]},
+                "error": f"工具调用JSON解析失败: {str(e)}"
+            }
+            results.append(ModelEvent(EventType.TOOL_RESULT, error_tool_data))
         
         return results
     
@@ -542,12 +620,11 @@ class ChatService:
             
         return normalized_calls
     
-    async def _safe_call_tool(self, mcp_service, tool_name: str, arguments: Dict[str, Any]) -> Any:
+    async def _safe_call_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Any:
         """
         安全地调用工具，处理所有异常
         
         Args:
-            mcp_service: MCP服务实例
             tool_name: 工具名称
             arguments: 工具参数
             
@@ -558,8 +635,8 @@ class ChatService:
             Exception: 如果调用失败
         """
         try:
-            # 调用MCP工具
-            result = await mcp_service._safe_call_tool(tool_name, arguments)
+            # 通过MCP Service调用工具
+            result = await self.mcp_service.call_tool_for_user(self.current_user.id, tool_name, arguments)
             return result
         except Exception as e:
             # 不处理异常，让调用者处理

@@ -1,0 +1,80 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+---
+description: React Rules for Frontend Development
+globs: ["frontend/**/*.tsx"]
+alwaysApply: false
+---
+
+### React 最佳实践
+- 使用带 TypeScript 接口的函数组件。
+- 使用 "function" 关键字定义组件。
+- 将可重用逻辑提取到自定义 Hooks 中。
+- 实现适当的组件组合。
+- 战略性地使用 `React.memo()` 优化性能。
+- 在 `useEffect` Hooks 中实现适当的清理。
+- 使用 `useCallback` 记忆化回调函数。
+- 使用 `useMemo` 处理昂贵的计算。
+- 避免在 JSX 中定义内联函数。
+- 使用动态导入实现代码分割。
+- 在列表中实现适当的 key 属性（避免使用索引作为 key）。
+- 优先组合而非继承。
+- 使用 children 属性和渲染属性模式。
+- 使用 `React.lazy()` 和 `Suspense` 实现代码分割。
+- 谨慎使用 refs，主要用于 DOM 访问。
+- 优先使用受控组件而非非受控组件。
+- 实现错误边界捕获并优雅处理错误。
+- 在 `useEffect` 中使用清理函数防止内存泄漏。
+- 使用短路求值和三元运算符进行条件渲染。
+
+### 代码实现指南
+- 使用早期返回提高可读性。
+- 使用 Tailwind 类进行样式化；避免 CSS 或 `<style>` 标签。
+- 在 class 标签中使用 "class:" 而非三元运算符。
+- 使用描述性变量/函数名；事件处理程序前缀为 "handle"（如 `handleClick`、`handleKeyDown`）。
+- 实现可访问性：`tabindex="0"`、`aria-label`、`on:click`、`on:keydown`。
+- 使用 const 而非函数；尽可能定义类型。
+
+### UI 和样式
+- 使用 Shadcn UI、Radix UI、Tailwind 进行组件和样式。
+- 实现响应式设计，采用移动优先方法。
+- 使用 Tailwind CSS 进行实用优先、可维护的样式。
+- 设计时采用移动优先、响应式原则。
+- 使用 CSS 变量或 Tailwind 的暗模式实现暗模式。
+- 确保颜色对比度符合可访问性标准。
+- 维护一致的间距值；为主题颜色和间距定义 CSS 变量。
+
+### 性能优化
+- 最小化 `'use client'`、`'useEffect'`、`'setState'`；优先使用 React Server Components (RSC)。
+- 使用 `Suspense` 包装客户端组件，带回退。
+- 为非关键组件使用动态加载。
+- 优化图片：使用 WebP 格式，包含大小数据，实现延迟加载。
+
+### 错误处理和验证
+- 优先处理错误；使用早期返回处理错误条件。
+- 使用保护子句处理前提条件和无效状态。
+- 实现适当的错误日志记录和用户友好的错误消息。
+- 考虑使用自定义错误类型或错误工厂。
+- 使用 Zod 进行表单验证；实现适当的错误消息。
+- 使用错误边界处理意外错误；记录到外部服务（如 Sentry）。
+- 为错误设计用户友好的回退 UI。
+
+### 状态管理
+- 使用 `useState` 管理组件级状态。
+- 使用 `useReducer` 处理复杂状态。
+- 使用 `useContext` 管理共享状态。
+- 使用 Redux Toolkit 管理全局状态；使用 `createSlice` 定义状态/归约/动作。
+- 规范化状态结构；使用选择器；避免大型切片。
+
+### 可访问性 (a11y)
+- 使用语义 HTML 构建结构。
+- 应用准确的 ARIA 属性。
+- 确保完全支持键盘导航。
+- 管理焦点顺序和可见性。
+- 维护可访问的颜色对比度比。
+- 遵循逻辑标题层次结构。
+- 使所有交互元素可访问。
+- 提供清晰、可访问的错误反馈。

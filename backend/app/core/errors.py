@@ -6,6 +6,7 @@ from typing import Dict, Any, Optional
 from fastapi import Request, status
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 
 class BaseAppException(Exception):
@@ -65,20 +66,29 @@ async def app_exception_handler(request: Request, exc: BaseAppException):
     )
 
 
-async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    """请求验证异常处理器"""
-    return JSONResponse(
-        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        content={
-            "message": "数据验证错误",
-            "details": exc.errors(),
-            "status_code": status.HTTP_422_UNPROCESSABLE_ENTITY
-        }
-    )
-
-
 # 注册错误处理器函数
 def register_exception_handlers(app):
     """在FastAPI应用中注册所有错误处理器"""
     app.add_exception_handler(BaseAppException, app_exception_handler)
-    app.add_exception_handler(RequestValidationError, validation_exception_handler) 
+
+    @app.exception_handler(StarletteHTTPException)
+    async def custom_http_exception_handler(request: Request, exc: StarletteHTTPException):
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={
+                "code": exc.status_code,
+                "message": exc.detail if isinstance(exc.detail, str) else str(exc.detail),
+                "data": None
+            }
+        )
+
+    @app.exception_handler(RequestValidationError)
+    async def custom_validation_exception_handler(request: Request, exc: RequestValidationError):
+        return JSONResponse(
+            status_code=422,
+            content={
+                "code": 422,
+                "message": "参数校验失败",
+                "data": exc.errors()
+            }
+        ) 

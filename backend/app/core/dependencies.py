@@ -28,14 +28,12 @@ def get_database() -> Database:
     db.create_tables()
     return db
 
-async def get_mcp_service() -> MCPService:
+def get_mcp_service() -> MCPService:
     """获取MCP服务单例"""
     global _mcp_service
     
     if _mcp_service is None:
-        settings = get_settings()
-        _mcp_service = MCPService(config_path=getattr(settings, "MCP_CONFIG_PATH", None))
-        await _mcp_service.initialize()
+        _mcp_service = MCPService()
         
     return _mcp_service
 

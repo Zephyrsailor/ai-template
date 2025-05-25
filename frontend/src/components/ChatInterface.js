@@ -46,6 +46,9 @@ const ChatInterface = ({
   const [completedThinking, setCompletedThinking] = useState(null); // 存储已完成的思考内容
   const [activeConversationId, setActiveConversationId] = useState('default');
   const [isLoading, setIsLoading] = useState(false);
+  const [isStreaming, setIsStreaming] = useState(false); // 是否正在流式响应
+  const [currentReader, setCurrentReader] = useState(null); // 当前的流式读取器
+  const [abortController, setAbortController] = useState(null); // 用于取消请求的控制器
   const messagesEndRef = useRef(null);
 
   // Get active conversation
@@ -72,6 +75,60 @@ const ChatInterface = ({
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
+
+  // 停止聊天生成
+  const handleStopGeneration = async () => {
+    try {
+      console.log('开始停止聊天生成...');
+      
+      // 1. 立即取消网络请求（如果还在进行中）
+      if (abortController) {
+        console.log('取消网络请求...');
+        abortController.abort();
+        setAbortController(null);
+      }
+
+      // 2. 停止流式读取（如果已经开始）
+      if (currentReader) {
+        console.log('取消流式读取...');
+        await currentReader.cancel();
+        setCurrentReader(null);
+      }
+
+      // 3. 调用后端停止API（异步进行，不等待结果）
+      const currentConversation = conversations.find(c => c.id === activeConversationId);
+      const conversationId = currentConversation?.serverId;
+      
+      if (conversationId) {
+        // 不等待结果，立即执行
+        fetch(`http://localhost:8000/api/chat/stop?conversation_id=${conversationId}`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${localStorage.getItem('authToken') || ''}`,
+          }
+        }).catch(error => {
+          console.warn('后端停止API调用失败:', error);
+        });
+      }
+
+      // 4. 立即重置所有状态
+      setIsStreaming(false);
+      setIsLoading(false);
+      setIsThinking(false);
+      setThinking('');
+      
+      console.log('聊天生成已停止');
+    } catch (error) {
+      console.error('停止聊天失败:', error);
+      // 即使出错也要重置状态
+      setIsStreaming(false);
+      setIsLoading(false);
+      setIsThinking(false);
+      setThinking('');
+      setAbortController(null);
+      setCurrentReader(null);
+    }
   };
 
   const handleSendMessage = async (messageText, options = {}) => {
@@ -134,11 +191,16 @@ const ChatInterface = ({
     }
 
     setIsLoading(true);
+    setIsStreaming(true); // 开始流式响应
     setThinking(''); // 清空思考内容
     setIsThinking(true); // 开始思考
 
     let currentMessageId = null;
     let currentMessageType = null;
+
+    // 创建AbortController用于取消请求
+    const controller = new AbortController();
+    setAbortController(controller);
 
     try {
       // API端点
@@ -152,6 +214,7 @@ const ChatInterface = ({
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${localStorage.getItem('authToken') || ''}`,
         },
+        signal: controller.signal, // 添加取消信号
         body: JSON.stringify({
           message: messageText,
           history: history,
@@ -171,6 +234,7 @@ const ChatInterface = ({
 
       // 处理流式响应
       const reader = response.body.getReader();
+      setCurrentReader(reader); // 保存reader引用以便停止
       const decoder = new TextDecoder();
 
       while (true) {
@@ -225,6 +289,20 @@ const ChatInterface = ({
                   );
                 }
               }
+              // 处理错误事件
+              if (type === 'error') {
+                const errorMessage = {
+                  id: `error-${Date.now()}`,
+                  role: 'assistant',
+                  content: `发生错误: ${chunkData.data.error || '未知错误'}`,
+                  isError: true,
+                  createdAt: new Date().toISOString(),
+                  type: 'content'
+                };
+                updateConversation(activeConversationId, errorMessage);
+                continue;
+              }
+
               // 判断是否需要新建消息块
               if (type !== currentMessageType) {
                 // 新建消息块
@@ -348,6 +426,12 @@ const ChatInterface = ({
       console.error('Error:', error);
       setIsThinking(false);
 
+      // 如果是用户主动取消的请求，不显示错误消息
+      if (error.name === 'AbortError') {
+        console.log('请求被用户取消');
+        return;
+      }
+
       if (currentMessageType === 'thinking' && currentMessageId) {
          setConversations(prev =>
            prev.map(conv => {
@@ -379,6 +463,10 @@ const ChatInterface = ({
       updateConversation(activeConversationId, errorMessage);
     } finally {
       setIsLoading(false);
+      setIsStreaming(false);
+      setCurrentReader(null);
+      setAbortController(null);
+      setIsThinking(false);
     }
   };
 
@@ -863,6 +951,8 @@ const ChatInterface = ({
           onSendMessage={handleSendMessage}
           isDisabled={isThinking || isLoading}
           isLoading={isThinking || isLoading}
+          isStreaming={isStreaming}
+          onStopGeneration={handleStopGeneration}
         />
       </div>
     </div>

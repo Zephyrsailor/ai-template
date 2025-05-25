@@ -29,20 +29,34 @@ class ConfigProvider:
             config_dict: 直接提供的配置字典
             env_prefix: 环境变量前缀
         """
-        self.servers: Dict[str, Dict[str, Any]] = {}
+        self.config_path = config_path
+        self.config_dict = config_dict
         self.env_prefix = env_prefix
+        self.servers: Dict[str, Dict[str, Any]] = {}
         
-        # 加载配置的优先顺序: 字典 > 文件 > 环境变量
-        if config_dict:
-            self._load_from_dict(config_dict)
-        elif config_path and os.path.exists(config_path):
-            self._load_from_file(config_path)
-        
-        # 总是检查环境变量以补充配置
-        self._load_from_env()
+        self._load_config()
         
         if not self.servers:
             print("警告: 未找到任何MCP服务器配置")
+    
+    def _load_config(self) -> None:
+        """加载配置的核心逻辑"""
+        self.servers.clear()
+        
+        # 加载配置的优先顺序: 字典 > 文件 > 环境变量
+        if self.config_dict:
+            self._load_from_dict(self.config_dict)
+        elif self.config_path and os.path.exists(self.config_path):
+            self._load_from_file(self.config_path)
+        
+        # 总是检查环境变量以补充配置
+        self._load_from_env()
+    
+    def reload(self) -> None:
+        """重新加载配置"""
+        print("重新加载MCP配置...")
+        self._load_config()
+        print(f"重新加载完成，发现 {len(self.servers)} 个服务器配置")
     
     def _load_from_file(self, config_path: str) -> None:
         """从JSON文件加载配置。"""
@@ -166,4 +180,21 @@ class ConfigProvider:
     
     def to_dict(self) -> Dict[str, Dict[str, Any]]:
         """将所有服务器配置转换为字典。"""
-        return dict(self.servers) 
+        return dict(self.servers)
+    
+    def get_user_server_names(self, user_id: str) -> List[str]:
+        """
+        获取指定用户的服务器名称列表
+        
+        Args:
+            user_id: 用户ID
+            
+        Returns:
+            属于该用户的服务器名称列表
+        """
+        user_servers = []
+        for name, config in self.servers.items():
+            # 如果服务器配置中有user_id字段且匹配，或者是全局服务器（无user_id）
+            if config.get("user_id") == user_id or not config.get("user_id"):
+                user_servers.append(name)
+        return user_servers 

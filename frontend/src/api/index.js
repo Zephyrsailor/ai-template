@@ -356,7 +356,7 @@ export const deleteConversation = async (conversationId) => {
 export const createMCPServer = async (serverData) => {
   try {
     // 确保服务器与用户关联
-    const response = await axios.post(`${API_BASE_URL}/mcp/servers?user_specific=true`, serverData);
+    const response = await axios.post(`${API_BASE_URL}/mcp/servers/?user_specific=true`, serverData);
     return response.data;
   } catch (error) {
     console.error('创建MCP服务器失败:', error);
@@ -484,4 +484,84 @@ export const createConversation = async (conversationData) => {
       error 
     };
   }
+};
+
+/**
+ * 调用工具
+ * @param {string} toolName 工具名称
+ * @param {Object} args 工具参数
+ * @param {boolean} userSpecific 是否使用用户数据隔离，默认为true
+ * @returns {Promise<Object>} 工具调用结果
+ */
+export const callTool = async (toolName, args, userSpecific = true) => {
+  try {
+    const response = await axios.post(`${API_BASE_URL}/tools/call?user_specific=${userSpecific}`, {
+      tool_name: toolName,
+      arguments: args
+    });
+    return response.data;
+  } catch (error) {
+    console.error('工具调用失败:', error);
+    throw error;
+  }
+};
+
+/**
+ * 在指定服务器上调用工具
+ * @param {string} serverId 服务器ID
+ * @param {string} toolName 工具名称
+ * @param {Object} args 工具参数
+ * @param {boolean} userSpecific 是否使用用户数据隔离，默认为true
+ * @returns {Promise<Object>} 工具调用结果
+ */
+export const callServerTool = async (serverId, toolName, args, userSpecific = true) => {
+  try {
+    const response = await axios.post(
+      `${API_BASE_URL}/mcp/servers/${serverId}/tools/${toolName}?user_specific=${userSpecific}`, 
+      args
+    );
+    return response.data;
+  } catch (error) {
+    console.error('服务器工具调用失败:', error);
+    throw error;
+  }
+};
+
+/**
+ * 获取工具列表
+ * @param {string} category 可选的工具类别过滤
+ * @param {boolean} userSpecific 是否只返回当前用户可用的工具，默认为true
+ * @returns {Promise<Object>} 工具列表
+ */
+export const getTools = async (category = null, userSpecific = true) => {
+  try {
+    let url = `${API_BASE_URL}/tools/?user_specific=${userSpecific}`;
+    if (category) {
+      url += `&category=${encodeURIComponent(category)}`;
+    }
+    const response = await axios.get(url);
+    return response.data;
+  } catch (error) {
+    console.error('获取工具列表失败:', error);
+    throw error;
+  }
+};
+
+/**
+ * 清除用户工具上下文
+ * @returns {Promise<Object>} 操作结果
+ */
+export const clearToolContext = async () => {
+  try {
+    const response = await axios.delete(`${API_BASE_URL}/tools/context`);
+    return response.data;
+  } catch (error) {
+    console.error('清除工具上下文失败:', error);
+    throw error;
+  }
+};
+
+// MCP 服务器状态管理
+export const fetchMCPServerStatuses = async (userSpecific = true) => {
+  return await axios.get(`/api/mcp/servers/statuses?user_specific=${userSpecific}`);
 }; 
