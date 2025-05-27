@@ -7,33 +7,38 @@ import { FaBook, FaTools, FaGlobe } from 'react-icons/fa';
 const Bubble = styled.div.attrs(props => ({
   className: props.className
 }))`
-  padding: 14px 18px;
-  border-radius: 18px;
-  background-color: ${({ $isUser, $isError }) => 
+  padding: ${({ $compact }) => $compact ? '8px 12px' : '14px 18px'};
+  border-radius: ${({ $compact }) => $compact ? '12px' : '18px'};
+  background-color: ${({ $isUser, $isError, $compact }) => 
+    $compact ? 'transparent' : 
     $isError ? '#ffecec' : $isUser ? '#f1f5f9' : 'white'};
   color: ${({ $isUser, $isError }) => 
     $isError ? '#d32f2f' : $isUser ? '#0f172a' : '#333'};
-  box-shadow: ${({ $isUser }) => 
+  box-shadow: ${({ $isUser, $compact }) => 
+    $compact ? 'none' : 
     $isUser ? '0 2px 4px rgba(0, 0, 0, 0.05)' : '0 2px 4px rgba(0, 0, 0, 0.05)'};
-  border: ${({ $isUser, $isError }) => 
+  border: ${({ $isUser, $isError, $compact }) => 
+    $compact ? 'none' :
     $isError ? '1px solid #ffcdd2' : 
     $isUser ? '1px solid #e2e8f0' : '1px solid #f1f5f9'};
   position: relative;
   line-height: 1.5;
   transform: none !important; /* 防止任何变换 */
   
-  &::before {
-    content: '';
-    position: absolute;
-    ${({ $isUser }) => $isUser 
-      ? 'right: -8px; border-left: 8px solid #e2e8f0;' 
-      : 'left: -8px; border-right: 8px solid white;'}
-    border-top: 8px solid transparent;
-    border-bottom: 8px solid transparent;
-    top: 15px;
-  }
+  ${({ $compact }) => !$compact && `
+    &::before {
+      content: '';
+      position: absolute;
+      ${({ $isUser }) => $isUser 
+        ? 'right: -8px; border-left: 8px solid #e2e8f0;' 
+        : 'left: -8px; border-right: 8px solid white;'}
+      border-top: 8px solid transparent;
+      border-bottom: 8px solid transparent;
+      top: 15px;
+    }
+  `}
 
-  ${({ $isError }) => $isError && `
+  ${({ $isError, $compact }) => $isError && !$compact && `
     &::before {
       border-left-color: #ffcdd2;
       border-right-color: #ffcdd2;
@@ -152,7 +157,8 @@ const MessageBubble = ({
   knowledgeBaseIds,
   mcpServerIds,
   useWebSearch = false,
-  toolCalls = []
+  toolCalls = [],
+  compact = false
 }) => {
   // 提取知识库引用和网络搜索引用
   const hasReferences = content && content.includes('参考来源:');
@@ -203,33 +209,75 @@ const MessageBubble = ({
     return formatted;
   }
   
-  return (
-    <Bubble $isUser={isUser} $isError={isError}>
-      {/* 标签区域 */}
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
-        {!isUser && knowledgeBaseIds && knowledgeBaseIds.length > 0 && (
-          <KnowledgeLabel isUser={isUser}>
-            <FaBook size={12} />
-            知识库引用
-          </KnowledgeLabel>
-        )}
-        
-        {/* MCP服务器标签 */}
-        {!isUser && mcpServerIds && mcpServerIds.length > 0 && (
-          <ToolLabel isUser={isUser}>
-            <FaTools size={12} />
-            工具服务
-          </ToolLabel>
-        )}
-        
-        {/* 网页搜索标签 */}
-        {!isUser && useWebSearch && (
-          <WebSearchLabel isUser={isUser}>
-            <FaGlobe size={12} />
-            网络搜索
-          </WebSearchLabel>
+  // 如果是 compact 模式，不显示外层气泡和标签，但保持Markdown支持
+  if (compact) {
+    return (
+      <div>
+        {isUser ? (
+          <MarkdownRenderer
+            content={mainContent}
+            variant="message"
+            isUser={isUser}
+          />
+        ) : (
+          <>
+            {/* 使用MarkdownRenderer确保完整的Markdown支持 */}
+            <MarkdownRenderer
+              content={mainContent}
+              variant="message"
+              isUser={isUser}
+            />
+            
+            {/* 知识库引用 - 使用Markdown渲染 */}
+            {hasReferences && references && (
+              <div style={{ marginTop: '12px', fontSize: '13px', color: '#6b7280' }}>
+                <div style={{ fontWeight: '500', marginBottom: '4px' }}>参考来源:</div>
+                <MarkdownRenderer content={references} variant="reference" />
+              </div>
+            )}
+            
+            {/* 网络搜索引用 - 使用Markdown渲染 */}
+            {hasWebReferences && webReferences && (
+              <div style={{ marginTop: '12px', fontSize: '13px', color: '#6b7280' }}>
+                <div style={{ fontWeight: '500', marginBottom: '4px' }}>网络搜索来源:</div>
+                <MarkdownRenderer content={webReferences} variant="reference" />
+              </div>
+            )}
+          </>
         )}
       </div>
+    );
+  }
+
+  return (
+    <Bubble $isUser={isUser} $isError={isError} $compact={compact}>
+      {/* 标签区域 - compact模式下隐藏 */}
+      {!compact && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+          {!isUser && knowledgeBaseIds && knowledgeBaseIds.length > 0 && (
+            <KnowledgeLabel isUser={isUser}>
+              <FaBook size={12} />
+              知识库引用
+            </KnowledgeLabel>
+          )}
+          
+          {/* MCP服务器标签 */}
+          {!isUser && mcpServerIds && mcpServerIds.length > 0 && (
+            <ToolLabel isUser={isUser}>
+              <FaTools size={12} />
+              工具服务
+            </ToolLabel>
+          )}
+          
+          {/* 网页搜索标签 */}
+          {!isUser && useWebSearch && (
+            <WebSearchLabel isUser={isUser}>
+              <FaGlobe size={12} />
+              网络搜索
+            </WebSearchLabel>
+          )}
+        </div>
+      )}
       
       {isUser ? (
         <UserContent>
@@ -248,8 +296,8 @@ const MessageBubble = ({
             toolCalls={toolCalls}
           />
           
-          {/* 知识库引用使用Markdown渲染 */}
-          {hasReferences && references && (
+          {/* 知识库引用使用Markdown渲染 - compact模式下隐藏 */}
+          {!compact && hasReferences && references && (
             <ReferencesContainer isUser={isUser}>
               <ReferencesTitle>参考来源:</ReferencesTitle>
               <ReferenceItem>
@@ -258,8 +306,8 @@ const MessageBubble = ({
             </ReferencesContainer>
           )}
           
-          {/* 网络搜索引用使用Markdown渲染 */}
-          {hasWebReferences && webReferences && (
+          {/* 网络搜索引用使用Markdown渲染 - compact模式下隐藏 */}
+          {!compact && hasWebReferences && webReferences && (
             <ReferencesContainer isUser={isUser}>
               <ReferencesTitle>网络搜索来源:</ReferencesTitle>
               <ReferenceItem>

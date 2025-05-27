@@ -3,4 +3,5 @@ uvicorn[standard]  # ASGI server
 openai>=1.0        # OpenAI/DeepSeek client library
 python-dotenv      # For loading .env file
 pydantic-settings>=2.0.0
-# aiohttp might be needed implicitly by openai async
+aiohttp            # For Ollama HTTP client
+google-generativeai  # For Gemini APIanthropic

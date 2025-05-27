@@ -12,6 +12,7 @@ class LLMProvider(str, Enum):
     AZURE = "azure"
     OLLAMA = "ollama"
     ANTHROPIC = "anthropic"
+    GEMINI = "gemini"
 
 class UserLLMConfig:
     """用户LLM配置模型"""

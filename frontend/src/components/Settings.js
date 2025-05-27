@@ -2,9 +2,10 @@ import React, { useState } from 'react';
 import styled from 'styled-components';
 import { IoClose } from 'react-icons/io5';
 import { FiSettings, FiUser, FiInfo, FiBook, FiBell } from 'react-icons/fi';
-import { FaDatabase, FaTools, FaLock, FaQuestionCircle, FaTag, FaKeyboard, FaUser } from 'react-icons/fa';
+import { FaDatabase, FaTools, FaLock, FaQuestionCircle, FaTag, FaKeyboard, FaUser, FaRobot } from 'react-icons/fa';
 import KnowledgeManager from './KnowledgeManager';
 import MCPManager from './MCPManager';
+import LLMConfigModal from './LLMConfigModal';
 
 // 模态框容器 - 更新样式更像ChatGPT的设计
 const ModalOverlay = styled.div`
@@ -231,6 +232,7 @@ const Button = styled.button`
 // 设置菜单项数据 - 更新为ChatGPT的设置项
 const menuItems = [
   { id: 'general', label: '通用设置', icon: <FiSettings /> },
+  { id: 'llm-config', label: 'LLM配置', icon: <FaRobot /> },
   { id: 'notifications', label: '通知', icon: <FiBell /> },
   { id: 'personalization', label: '个性化', icon: <FaUser /> },
   { id: 'knowledge-bases', label: '知识库管理', icon: <FaDatabase /> },
@@ -241,12 +243,13 @@ const menuItems = [
   { id: 'release-notes', label: '版本说明', icon: <FaTag /> }
 ];
 
-const Settings = ({ isOpen, onClose }) => {
+const Settings = ({ isOpen, onClose, selectedModel, setSelectedModel }) => {
   const [activeSection, setActiveSection] = useState('general');
   const [theme, setTheme] = useState('system');
   const [language, setLanguage] = useState('zh-CN');
   const [showThinking, setShowThinking] = useState(true);
   const [showSuggestions, setShowSuggestions] = useState(true);
+  const [showLLMConfigModal, setShowLLMConfigModal] = useState(false);
   
   if (!isOpen) return null;
   
@@ -397,6 +400,35 @@ const Settings = ({ isOpen, onClose }) => {
               </SettingGroup>
             </ContentSection>
             
+            {/* LLM配置 */}
+            <ContentSection active={activeSection === 'llm-config'}>
+              <SettingGroup>
+                <GroupTitle>大语言模型配置</GroupTitle>
+                
+                <SettingItem>
+                  <SettingLabel>
+                    <h4>自定义LLM配置</h4>
+                    <p>配置您自己的API密钥和模型参数</p>
+                  </SettingLabel>
+                  <SettingControl>
+                    <Button primary onClick={() => setShowLLMConfigModal(true)}>
+                      管理配置
+                    </Button>
+                  </SettingControl>
+                </SettingItem>
+              </SettingGroup>
+              
+              <SettingGroup>
+                <GroupTitle>使用说明</GroupTitle>
+                <div style={{ fontSize: '14px', color: '#6e6e80', lineHeight: '1.6' }}>
+                  <p>• 支持OpenAI、DeepSeek、Azure OpenAI、Ollama、Anthropic等多种提供商</p>
+                  <p>• 可以配置多个不同的模型配置，并设置默认配置</p>
+                  <p>• API密钥将安全存储在本地，不会上传到服务器</p>
+                  <p>• 配置完成后，可在聊天界面左上角选择使用的模型</p>
+                </div>
+              </SettingGroup>
+            </ContentSection>
+            
             {/* 通知 */}
             <ContentSection active={activeSection === 'notifications'}>
               <h3>通知设置</h3>
@@ -453,8 +485,20 @@ const Settings = ({ isOpen, onClose }) => {
           </ContentArea>
         </ModalBody>
       </ModalContainer>
+      
+      {/* LLM配置模态框 */}
+      <LLMConfigModal
+        isOpen={showLLMConfigModal}
+        onClose={() => setShowLLMConfigModal(false)}
+        onConfigChange={() => {
+          // 配置更改后的回调，可以用来刷新模型列表等
+          console.log('LLM配置已更改');
+        }}
+        selectedModel={selectedModel}
+        setSelectedModel={setSelectedModel}
+      />
     </ModalOverlay>
   );
 };
 
-export default Settings; 
+export default Settings;

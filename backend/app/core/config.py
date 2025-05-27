@@ -22,19 +22,21 @@ class Settings(BaseSettings):
     ANTHROPIC_API_KEY: Optional[str] = None
     AZURE_API_KEY: Optional[str] = None
     DEEPSEEK_API_KEY: Optional[str] = None
+    GEMINI_API_KEY: Optional[str] = None
     
     # LLM配置
-    LLM_PROVIDER: str = "ollama"  # 可选值: "openai", "anthropic", "azure", "ollama", "local", "deepseek"
+    LLM_PROVIDER: str = "ollama"  # 可选值: "openai", "anthropic", "azure", "ollama", "local", "deepseek", "gemini"
     LLM_MODEL_NAME: str = "llama2"  # 默认模型名称
     
     # 嵌入模型配置
-    EMBEDDING_PROVIDER: str = "ollama"  # 可选值: "openai", "huggingface", "ollama", "local", "deepseek"
+    EMBEDDING_PROVIDER: str = "ollama"  # 可选值: "openai", "huggingface", "ollama", "local", "deepseek", "gemini"
     EMBEDDING_MODEL_NAME: str = "nomic-embed-text"  # 默认嵌入模型
     
     # 第三方服务配置
     OLLAMA_BASE_URL: str = "http://localhost:11434"
     OPENAI_BASE_URL: Optional[str] = None
     DEEPSEEK_BASE_URL: Optional[str] = None
+    GEMINI_BASE_URL: Optional[str] = None
 
     # JWT认证配置
     SECRET_KEY: str = "supersecretkey"  # 生产环境应使用安全的密钥并通过环境变量配置
@@ -72,6 +74,10 @@ class Settings(BaseSettings):
             params["api_key"] = self.DEEPSEEK_API_KEY
             if self.DEEPSEEK_BASE_URL:
                 params["api_base"] = self.DEEPSEEK_BASE_URL
+        elif provider == "gemini":
+            params["api_key"] = self.GEMINI_API_KEY
+            if self.GEMINI_BASE_URL:
+                params["api_base"] = self.GEMINI_BASE_URL
             
         return params
         
@@ -93,6 +99,12 @@ class Settings(BaseSettings):
             params["api_key"] = self.DEEPSEEK_API_KEY
             if self.DEEPSEEK_BASE_URL:
                 params["api_base"] = self.DEEPSEEK_BASE_URL
+        elif provider == "gemini":
+            # Gemini使用自己的接口
+            params["model"] = params.pop("model_name")
+            params["api_key"] = self.GEMINI_API_KEY
+            if self.GEMINI_BASE_URL:
+                params["api_base"] = self.GEMINI_BASE_URL
                 
         return params
 
@@ -134,6 +146,18 @@ def get_embedding_model():
             from llama_index.embeddings.openai import OpenAIEmbedding
             logger.info("使用DeepSeek嵌入模型")
             return OpenAIEmbedding(**params)
+            
+        elif provider == "gemini":
+            # Gemini嵌入模型
+            try:
+                logger.info("正在加载Gemini嵌入模型...")
+                from llama_index.embeddings.gemini import GeminiEmbedding
+                return GeminiEmbedding(**params)
+            except ImportError as e:
+                logger.error(f"Gemini嵌入模型导入失败: {e}")
+                logger.info("尝试fallback到本地嵌入模型...")
+                from llama_index.core.embeddings import resolve_embed_model
+                return resolve_embed_model("local")
             
         elif provider == "huggingface":
             try:
@@ -193,6 +217,12 @@ def get_llm_model():
             logger.info("使用DeepSeek LLM")
             return OpenAI(**params)
             
+        elif provider == "gemini":
+            # 处理Gemini API
+            from llama_index.llms.gemini import Gemini
+            logger.info("使用Gemini LLM")
+            return Gemini(**params)
+            
         elif provider == "local":
             from llama_index.llms import LlamaCPP
             return LlamaCPP(model_path=settings.LLM_MODEL_NAME)
@@ -220,22 +250,31 @@ def get_provider():
         base_url = settings.OPENAI_BASE_URL
         return OpenAIProvider(api_key=api_key, base_url=base_url)
     elif provider_type == "deepseek":
-        from ..lib.providers.openai import OpenAIProvider  # DeepSeek使用OpenAI兼容接口
+        from ..lib.providers.deepseek import DeepSeekProvider
         api_key = settings.DEEPSEEK_API_KEY
         base_url = settings.DEEPSEEK_BASE_URL
-        return OpenAIProvider(api_key=api_key, base_url=base_url)
+        return DeepSeekProvider(api_key=api_key, base_url=base_url)
+    elif provider_type == "gemini":
+        from ..lib.providers.gemini import GeminiProvider
+        api_key = settings.GEMINI_API_KEY
+        base_url = settings.GEMINI_BASE_URL
+        return GeminiProvider(api_key=api_key, base_url=base_url)
     elif provider_type == "azure":
-        from ..lib.providers.openai import OpenAIProvider  # 假设Azure也可以使用OpenAI兼容接口
+        from ..lib.providers.azure import AzureOpenAIProvider
         api_key = settings.AZURE_API_KEY
-        # Azure需要特殊处理，这里只是示例
-        return OpenAIProvider(api_key=api_key, base_url=None)
-    elif provider_type == "ollama" or provider_type == "local":
-        # 对于Ollama，仍然使用包装器
-        from ..lib.providers.openai import OpenAIProvider
-        
-        # 使用本地模拟的API密钥
-        return OpenAIProvider(
-            api_key="sk-ollama-local", 
+        base_url = getattr(settings, 'AZURE_BASE_URL', None)
+        return AzureOpenAIProvider(api_key=api_key, base_url=base_url)
+    elif provider_type == "ollama":
+        from ..lib.providers.ollama import OllamaProvider
+        return OllamaProvider(
+            api_key="ollama-local", 
+            base_url=settings.OLLAMA_BASE_URL
+        )
+    elif provider_type == "local":
+        # 对于本地模型，仍然使用Ollama包装器
+        from ..lib.providers.ollama import OllamaProvider
+        return OllamaProvider(
+            api_key="ollama-local", 
             base_url=settings.OLLAMA_BASE_URL
         )
     else:

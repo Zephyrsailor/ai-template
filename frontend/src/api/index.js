@@ -276,10 +276,7 @@ export const fetchConversations = async () => {
   try {
     // 确保GET请求的路径末尾有斜杠
     const response = await axios.get(`${API_BASE_URL}/conversations/`);
-    
-    // 添加详细日志，帮助调试会话数据
-    console.log("原始会话响应数据:", JSON.stringify(response.data, null, 2));
-    
+        
     // 处理后端API返回格式，获取实际数据部分
     if (response.data && response.data.data) {
       // 标准格式是 { code: 200, message: "...", data: [...] }
@@ -564,4 +561,105 @@ export const clearToolContext = async () => {
 // MCP 服务器状态管理
 export const fetchMCPServerStatuses = async (userSpecific = true) => {
   return await axios.get(`/api/mcp/servers/statuses?user_specific=${userSpecific}`);
+};
+
+/**
+ * 获取LLM提供商列表
+ * @returns {Promise<Array>} 提供商列表
+ */
+export const fetchLLMProviders = async () => {
+  try {
+    const response = await axios.get(`${API_BASE_URL}/user/llm-config/providers`);
+    return response.data;
+  } catch (error) {
+    console.error('获取LLM提供商失败:', error);
+    throw error;
+  }
+};
+
+/**
+ * 获取用户LLM配置列表
+ * @returns {Promise<Array>} 用户配置列表
+ */
+export const fetchUserLLMConfigs = async () => {
+  try {
+    const response = await axios.get(`${API_BASE_URL}/user/llm-config/`);
+    return response.data;
+  } catch (error) {
+    console.error('获取用户LLM配置失败:', error);
+    throw error;
+  }
+};
+
+/**
+ * 获取默认LLM配置
+ * @returns {Promise<Object>} 默认配置
+ */
+export const fetchDefaultLLMConfig = async () => {
+  try {
+    const response = await axios.get(`${API_BASE_URL}/user/llm-config/default`);
+    return response.data;
+  } catch (error) {
+    console.error('获取默认LLM配置失败:', error);
+    throw error;
+  }
+};
+
+/**
+ * 创建或更新LLM配置
+ * @param {Object} configData 配置数据
+ * @returns {Promise<Object>} 创建结果
+ */
+export const saveLLMConfig = async (configData) => {
+  try {
+    const response = await axios.post(`${API_BASE_URL}/user/llm-config/`, configData);
+    return response.data;
+  } catch (error) {
+    console.error('保存LLM配置失败:', error);
+    throw error;
+  }
+};
+
+/**
+ * 删除LLM配置
+ * @param {string} configName 配置名称
+ * @returns {Promise<Object>} 删除结果
+ */
+export const deleteLLMConfig = async (configName) => {
+  try {
+    const response = await axios.delete(`${API_BASE_URL}/user/llm-config/${encodeURIComponent(configName)}`);
+    return response.data;
+  } catch (error) {
+    console.error('删除LLM配置失败:', error);
+    throw error;
+  }
+};
+
+/**
+ * 获取Ollama实际可用的模型列表
+ * @param {string} baseUrl Ollama服务器地址
+ * @returns {Promise<Array>} 模型列表
+ */
+export const fetchOllamaModels = async (baseUrl = 'http://localhost:11434') => {
+  try {
+    const response = await axios.get(`${API_BASE_URL}/user/llm-config/ollama/models?base_url=${encodeURIComponent(baseUrl)}`);
+    return response.data;
+  } catch (error) {
+    console.error('获取Ollama模型列表失败:', error);
+    throw error;
+  }
+};
+
+/**
+ * 获取用户配置的所有提供商的可用模型列表
+ * @returns {Promise<Array>} 按提供商分组的模型列表
+ */
+export const fetchAvailableModelsForUser = async () => {
+  try {
+    const response = await axios.get(`${API_BASE_URL}/user/llm-config/models/available`);
+    return response.data;
+  } catch (error) {
+    console.error('获取用户可用模型列表失败:', error);
+    throw error;
+  }
 }; 

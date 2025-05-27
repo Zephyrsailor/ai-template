@@ -39,7 +39,7 @@ const ThinkingHeader = styled.div.attrs(props => ({
 }))`
   display: flex;
   align-items: center;
-  padding: ${({ $collapsed }) => $collapsed ? '12px 16px' : '14px 18px'};
+  padding: ${({ $collapsed }) => $collapsed ? '10px 14px' : '12px 16px'};
   background-color: ${({ $isHistorical, $collapsed, $isCompleted }) => 
     $collapsed 
       ? ($isHistorical || $isCompleted ? '#f8fafc' : '#f1f5f9') 
@@ -47,11 +47,15 @@ const ThinkingHeader = styled.div.attrs(props => ({
   border-bottom: ${({ $collapsed }) => $collapsed ? 'none' : '1px solid #e2e8f0'};
   cursor: pointer;
   user-select: none;
-  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: all 0.2s ease;
   
   &:hover {
     background-color: ${({ $isHistorical, $isCompleted }) => 
       $isHistorical || $isCompleted ? '#f1f5f9' : '#e2e8f0'};
+  }
+  
+  &:active {
+    transform: scale(0.99);
   }
 `;
 
@@ -128,12 +132,16 @@ const ThinkingProgress = styled.div`
 `;
 
 const HeaderTitle = styled.div`
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 600;
   color: #475569;
   flex-grow: 1;
   display: flex;
   align-items: center;
+  
+  ${({ $collapsed }) => $collapsed && `
+    font-size: 13px;
+  `}
 `;
 
 const ToggleButton = styled.button.attrs(props => ({
@@ -197,9 +205,9 @@ const CollapsedIndicator = styled.div`
 const ThinkingContentWrapper = styled.div.attrs(props => ({
   className: props.className
 }))`
-  max-height: ${({ $collapsed }) => $collapsed ? '0' : '80vh'};
+  max-height: ${({ $collapsed }) => $collapsed ? '0' : '40vh'};
   overflow: hidden;
-  transition: max-height 0.4s ease-out;
+  transition: max-height 0.3s ease-out;
   position: relative;
   
   &::after {
@@ -224,7 +232,7 @@ const ThinkingContent = styled.div`
   overflow-wrap: break-word;
   word-break: break-word;
   overflow-y: auto;
-  max-height: ${props => props.$isHistorical ? '45vh' : '70vh'};
+  max-height: ${props => props.$isHistorical ? '35vh' : '35vh'};
   
   &::-webkit-scrollbar {
     width: 5px;
@@ -270,7 +278,7 @@ const ThinkingContent = styled.div`
   @media (max-width: 768px) {
     padding: 12px;
     font-size: 13px;
-    max-height: ${props => props.$isHistorical ? '40vh' : '60vh'};
+    max-height: ${props => props.$isHistorical ? '30vh' : '30vh'};
   }
 `;
 
@@ -338,10 +346,8 @@ const ThinkingBubble = ({
   autoCollapse = false,
   preserveContent = true
 }) => {
-  // 只在首次渲染时根据 isThinking/isCompleted/isHistorical 决定初始折叠状态，后续完全由用户控制
-  const [collapsed, setCollapsed] = useState(
-    autoCollapse || isHistorical || isCompleted
-  );
+  // 优化初始状态：默认折叠，提升用户体验
+  const [collapsed, setCollapsed] = useState(true);
   const [hasScroll, setHasScroll] = useState(false);
   const contentRef = useRef(null);
 
@@ -353,8 +359,30 @@ const ThinkingBubble = ({
     }
   }, [thinking, collapsed]);
 
-  // 用户可随时手动展开/收缩
+  // 添加键盘快捷键支持 - ESC键快速收起
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape' && !collapsed) {
+        setCollapsed(true);
+      }
+    };
+
+    if (!collapsed) {
+      document.addEventListener('keydown', handleKeyDown);
+      return () => document.removeEventListener('keydown', handleKeyDown);
+    }
+  }, [collapsed]);
+
+  // 用户可随时手动展开/收缩 - 优化事件处理
   const handleToggleCollapse = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setCollapsed(prev => !prev);
+  };
+
+  // 专门处理按钮点击，确保响应性
+  const handleButtonClick = (e) => {
+    e.preventDefault();
     e.stopPropagation();
     setCollapsed(prev => !prev);
   };
@@ -398,7 +426,7 @@ const ThinkingBubble = ({
           >
             <HiOutlineSparkles size={18} />
           </HeaderIcon>
-          <HeaderTitle>
+          <HeaderTitle $collapsed={collapsed}>
             {getHeaderTitle()}
             {(showThinkingAnim && !collapsed) && (
               <SpinnerIcon>
@@ -414,7 +442,7 @@ const ThinkingBubble = ({
             )}
           </HeaderTitle>
           <ToggleButton 
-            onClick={handleToggleCollapse}
+            onClick={handleButtonClick}
             $collapsed={collapsed}
           >
             {collapsed ? <FaChevronDown size={14} /> : <FaChevronUp size={14} />}

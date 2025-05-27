@@ -11,6 +11,7 @@ class ModelProvider(str, Enum):
     OLLAMA = "ollama"
     LOCAL = "local"
     DEEPSEEK = "deepseek"
+    GEMINI = "gemini"
 
 class EmbeddingProvider(str, Enum):
     """嵌入模型提供商枚举"""
@@ -19,6 +20,7 @@ class EmbeddingProvider(str, Enum):
     OLLAMA = "ollama"
     LOCAL = "local"
     DEEPSEEK = "deepseek"
+    GEMINI = "gemini"
 
 class MessageRole(str, Enum):
     """消息角色枚举"""

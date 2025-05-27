@@ -41,7 +41,8 @@ const ChatInput = ({
   placeholder = '输入您的问题...',
   isLoading = false,
   isStreaming = false,
-  onStopGeneration
+  onStopGeneration,
+  selectedModel = null
 }) => {
   const [message, setMessage] = useState('');
   const [selectedKbs, setSelectedKbs] = useState([]);
@@ -66,7 +67,8 @@ const ChatInput = ({
       onSendMessage(message, {
         knowledgeBaseIds: selectedKbs,
         mcpServerIds: selectedServers,
-        useWebSearch: useWebSearch
+        useWebSearch: useWebSearch,
+        modelId: selectedModel
       });
       setMessage('');
     }

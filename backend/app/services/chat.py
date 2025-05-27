@@ -16,6 +16,7 @@ from fastapi import HTTPException
 from ..services.knowledge import KnowledgeService
 from ..services.mcp import MCPService
 from ..services.conversation import ConversationService
+from ..services.user_llm_config import UserLLMConfigService
 from ..domain.models.user import User
 from ..domain.schemas.chat import ChatRequest
 from ..services.search import search_web
@@ -32,12 +33,95 @@ class ChatService:
                 conversation_service: ConversationService):
         """初始化聊天服务"""
         self.settings = get_settings()
-        self.provider = get_provider()
+        self.provider = get_provider()  # 默认provider
         self.knowledge_service = knowledge_service
         self.mcp_service = mcp_service
         self.current_user = current_user
         self.conversation_service = conversation_service
+        self.user_llm_config_service = UserLLMConfigService()
         logger.info(f"聊天服务已创建，使用提供商: {self.settings.LLM_PROVIDER}")
+
+    def _get_user_provider(self, user_id: str, model_id: Optional[str] = None):
+        """获取用户特定的Provider，如果没有用户配置则使用默认Provider"""
+        if not user_id:
+            return self.provider, model_id or self.settings.LLM_MODEL_NAME
+        
+        # 如果指定了model_id，先查找对应的用户配置
+        user_config = None
+        if model_id:
+            # 获取所有用户配置，查找匹配的模型
+            user_configs = self.user_llm_config_service.get_user_configs(user_id)
+            for config in user_configs:
+                if config.model_name == model_id:
+                    user_config = config
+                    break
+            
+            # 如果没有找到精确匹配的用户配置，尝试根据模型名称推断提供商
+            if not user_config:
+                inferred_provider = self._infer_provider_from_model(model_id)
+                if inferred_provider:
+                    # 查找该提供商的任意配置
+                    for config in user_configs:
+                        if config.provider.value.lower() == inferred_provider:
+                            # 创建一个临时配置，使用指定的模型
+                            user_config = config
+                            break
+        
+        # 如果没有找到对应的配置，使用默认配置
+        if not user_config:
+            user_config = self.user_llm_config_service.get_user_default_config(user_id)
+        
+        # 如果还是没有用户配置，使用系统默认
+        if not user_config:
+            return self.provider, model_id or self.settings.LLM_MODEL_NAME
+        
+        try:
+            # 根据用户配置创建Provider
+            provider_params = user_config.get_provider_params()
+            provider_type = user_config.provider.value.lower()
+            
+            if provider_type in ["openai", "deepseek", "azure"]:
+                from ..lib.providers.openai import OpenAIProvider
+                user_provider = OpenAIProvider(**provider_params)
+            elif provider_type == "gemini":
+                from ..lib.providers.gemini import GeminiProvider
+                user_provider = GeminiProvider(**provider_params)
+            elif provider_type in ["ollama", "local"]:
+                from ..lib.providers.ollama import OllamaProvider
+                user_provider = OllamaProvider(**provider_params)
+            else:
+                logger.warning(f"不支持的提供者类型: {provider_type}, 使用默认配置")
+                return self.provider, model_id or self.settings.LLM_MODEL_NAME
+            
+            user_model = model_id or user_config.model_name
+            
+            logger.info(f"使用用户自定义LLM配置: {user_config.provider.value} - {user_model}")
+            return user_provider, user_model
+            
+        except Exception as e:
+            logger.error(f"创建用户Provider失败: {str(e)}, 使用默认配置")
+            return self.provider, model_id or self.settings.LLM_MODEL_NAME
+    
+    def _infer_provider_from_model(self, model_id: str) -> Optional[str]:
+        """根据模型名称推断提供商"""
+        if not model_id:
+            return None
+        
+        model_lower = model_id.lower()
+        
+        # 根据模型名称模式推断提供商
+        if model_lower.startswith(('gpt-', 'o1-')):
+            return 'openai'
+        elif model_lower.startswith('deepseek'):
+            return 'deepseek'
+        elif model_lower.startswith('gemini'):
+            return 'gemini'
+        elif model_lower.startswith('claude'):
+            return 'anthropic'
+        elif any(pattern in model_lower for pattern in ['llama', 'qwen', 'mistral', 'phi', 'codellama']):
+            return 'ollama'
+        
+        return None
 
     async def chat_stream(
         self,
@@ -191,7 +275,13 @@ class ChatService:
         )
         
         logger.info(f"开始ReAct模式聊天，消息: '{messages[:50]}...'，模型: {request.model_id or self.settings.LLM_MODEL_NAME}")
-         # 进行对话直到获得最终回答或达到终止条件
+         # 获取用户特定的Provider和模型
+        user_provider, user_model = self._get_user_provider(
+            self.current_user.id if self.current_user else None,
+            request.model_id
+        )
+        
+        # 进行对话直到获得最终回答或达到终止条件
         has_final_answer = False
         max_iterations = 20  # 为了安全设置最大迭代次数
         iteration = 0
@@ -209,9 +299,9 @@ class ChatService:
                 collected_content = ""
                 collected_tool_calls = []                
                 # 调用模型的ReAct模式
-                async for event in self.provider.completions(
+                async for event in user_provider.completions(
                     messages=messages,
-                    model_id=request.model_id or self.settings.LLM_MODEL_NAME,
+                    model_id=user_model,
                     system_prompt=request.system_prompt,
                     tools=tools,
                     temperature=request.temperature,
@@ -395,15 +485,11 @@ class ChatService:
             context = "\n\n".join(context_parts)
             user_message = f"{context}\n\n用户问题: {message}"
         
-        # 准备消息历史 - 确保最后一条是用户消息
+        # 准备消息历史 - 包含所有历史消息
         messages = []
         if history:
-            # 仅添加历史消息中的非最后一条(如果最后一条是助手消息)
-            for i, msg in enumerate(history):
-                # 如果是最后一条且是助手消息，不添加到新历史中
-                if i == len(history) - 1 and msg.get("role") == "assistant":
-                    continue
-                messages.append(msg)
+            # 添加所有历史消息
+            messages.extend(history)
         
         # 添加当前用户消息作为最后一条
         messages.append({"role": "user", "content": user_message})

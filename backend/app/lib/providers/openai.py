@@ -117,10 +117,7 @@ class OpenAIProvider(BaseProvider):
             # 如果发生错误或响应为空，退出循环
             if model_response_error or not full_response:
                 return
-            
-            # 将助手回复添加到对话历史
-            # conversation_messages.append({"role": "assistant", "content": full_response})
-            
+                        
             # 处理工具调用(如果有)
             if has_tool_call:
                 tool_call_json = self._parse_tool_call(full_response)
@@ -303,114 +300,64 @@ class OpenAIProvider(BaseProvider):
         
         return tool_match.group(1).strip()
 
-    
-
     async def _safe_call_tool(self, mcp_service, tool_name: str, arguments: Dict[str, Any]) -> Any:
-        """
-        安全地调用工具，处理所有异常
-        
-        Args:
-            mcp_service: MCP服务实例
-            tool_name: 工具名称
-            arguments: 工具参数
-            
-        Returns:
-            工具调用结果
-            
-        Raises:
-            Exception: 如果调用失败
-        """
+        """安全地调用工具，处理异常"""
         try:
-            # 调用MCP工具
-            result = await mcp_service._safe_call_tool(tool_name, arguments)
+            result = await mcp_service.call_tool(tool_name, arguments)
             return result
         except Exception as e:
-            # 不处理异常，让调用者处理
-            raise
-
-   
-
+            error_msg = f"工具调用失败 ({tool_name}): {str(e)}"
+            print(f"工具调用错误: {error_msg}")
+            return ModelEvent(EventType.ERROR, {"error": error_msg})
+    
     def _serialize_call_tool_result(self, result: Any) -> Dict[str, Any]:
-        """
-        将CallToolResult对象序列化为可JSON化的字典
-        
-        Args:
-            result: CallToolResult对象或其他结果
-            
-        Returns:
-            可JSON化的字典
-        """
-        # 处理None值
-        if result is None:
-            return {"content": "无结果"}
-        
-        # 处理CallToolResult对象
-        if hasattr(result, "content") and hasattr(result, "isError"):
-            serialized = {
-                "isError": result.isError,
-                "content": []
+        """序列化工具调用结果"""
+        if isinstance(result, ModelEvent):
+            return {
+                "type": result.type,
+                "data": result.data
             }
-            
-            # 处理content属性
-            if result.content:
-                if isinstance(result.content, list):
-                    for item in result.content:
-                        if hasattr(item, "text"):
-                            # TextContent对象
-                            serialized["content"].append({
-                                "type": "text",
-                                "text": item.text
-                            })
-                        elif hasattr(item, "url"):
-                            # ImageContent对象
-                            serialized["content"].append({
-                                "type": "image",
-                                "url": item.url
-                            })
-                        elif isinstance(item, dict):
-                            # 已经是字典
-                            serialized["content"].append(item)
-                        else:
-                            # 其他类型
-                            serialized["content"].append({
-                                "type": "text",
-                                "text": str(item)
-                            })
-                else:
-                    # 非列表内容
-                    serialized["content"] = [{
-                        "type": "text",
-                        "text": str(result.content)
-                    }]
-            
-            return serialized
-        # 处理列表
-        elif isinstance(result, list):
-            # 列表需要特殊处理，确保每个元素都可序列化
-            content_list = []
-            for item in result:
-                if isinstance(item, dict):
-                    content_list.append(item)
-                elif isinstance(item, str):
-                    content_list.append({"type": "text", "text": item})
-                else:
-                    content_list.append({"type": "text", "text": str(item)})
-            return {"content": content_list}
-        # 处理字典
         elif isinstance(result, dict):
-            # 已经是字典
             return result
-        # 处理字符串
-        elif isinstance(result, str):
-            try:
-                # 尝试解析为JSON
-                parsed = json.loads(result)
-                return parsed if isinstance(parsed, dict) else {"content": parsed}
-            except:
-                # 如果不是有效的JSON，返回文本内容
-                return {"content": [{"type": "text", "text": result}]}
-        # 处理其他类型
+        elif isinstance(result, (list, str, int, float, bool)):
+            return {"result": result}
         else:
-            # 其他类型，转为字符串
-            return {"content": [{"type": "text", "text": str(result)}]}
+            return {"result": str(result)}
+
+    async def list_models(self) -> List[str]:
+        """
+        获取OpenAI API可用的模型列表
+        """
+        try:
+            models_response = await self.client.models.list()
+            models = []
+            
+            # 过滤出聊天模型（排除嵌入、图像等模型）
+            chat_model_prefixes = ['gpt-', 'o1-', 'text-davinci', 'text-curie', 'text-babbage', 'text-ada']
+            
+            for model in models_response.data:
+                model_id = model.id
+                # 只包含聊天相关的模型
+                if any(model_id.startswith(prefix) for prefix in chat_model_prefixes):
+                    models.append(model_id)
+            
+            # 按名称排序
+            models.sort()
+            return models
+            
+        except Exception as e:
+            logger.error(f"获取OpenAI模型列表失败: {str(e)}")
+            # 返回默认模型列表作为后备
+            return ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-4", "gpt-3.5-turbo", "o1-preview", "o1-mini"]
+
+    async def check_model_availability(self, model_id: str) -> bool:
+        """
+        检查模型是否在OpenAI中可用
+        """
+        try:
+            available_models = await self.list_models()
+            return model_id in available_models
+        except Exception as e:
+            logger.error(f"检查OpenAI模型可用性失败: {str(e)}")
+            return False
 

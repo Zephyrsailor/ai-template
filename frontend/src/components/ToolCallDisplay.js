@@ -2,47 +2,51 @@ import React, { useState } from 'react';
 import styled from 'styled-components';
 import { FaTools, FaChevronDown, FaChevronUp, FaCopy, FaSearch, FaExternalLinkAlt } from 'react-icons/fa';
 
-// 工具调用容器
+// 工具调用容器 - 参考Claude/ChatGPT的紧凑设计
 const ToolCallContainer = styled.div`
-  margin: 0;
+  margin: 8px 0;
   border-radius: 8px;
   overflow: hidden;
-  background: ${props => props.isUser ? 'rgba(255, 255, 255, 0.15)' : 'rgba(74, 108, 247, 0.05)'};
-  border: 1px solid ${props => props.isUser ? 'rgba(255, 255, 255, 0.2)' : 'rgba(74, 108, 247, 0.2)'};
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
-  width: 100%;
-  min-height: 80px;
-  display: block;
+  background: ${props => props.isUser ? 'rgba(255, 255, 255, 0.1)' : '#f8fafc'};
+  border: 1px solid ${props => props.isUser ? 'rgba(255, 255, 255, 0.2)' : '#e2e8f0'};
+  font-size: 13px;
+  transition: all 0.2s ease;
+  
+  &:hover {
+    border-color: ${props => props.isUser ? 'rgba(255, 255, 255, 0.3)' : '#cbd5e1'};
+  }
 `;
 
-// 工具调用标题
+// 工具调用标题 - 更紧凑的设计
 const ToolCallHeader = styled.div`
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 10px 15px;
-  background: ${props => props.isUser ? 'rgba(255, 255, 255, 0.2)' : 'rgba(74, 108, 247, 0.1)'};
-  color: ${props => props.isUser ? 'white' : '#333'};
+  padding: 8px 12px;
+  background: ${props => props.isUser ? 'rgba(255, 255, 255, 0.15)' : '#f1f5f9'};
+  color: ${props => props.isUser ? 'white' : '#475569'};
   cursor: pointer;
   user-select: none;
   transition: background-color 0.2s;
-  width: 100%;
+  border-bottom: ${props => props.expanded ? '1px solid #e2e8f0' : 'none'};
   
   &:hover {
-    background: ${props => props.isUser ? 'rgba(255, 255, 255, 0.25)' : 'rgba(74, 108, 247, 0.15)'};
+    background: ${props => props.isUser ? 'rgba(255, 255, 255, 0.2)' : '#e2e8f0'};
   }
 `;
 
-// 工具名称
+// 工具名称 - 简化设计
 const ToolName = styled.div`
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   font-weight: 500;
+  font-size: 13px;
   
   svg {
-    color: ${props => props.isUser ? 'white' : '#4a6cf7'};
+    color: ${props => props.isUser ? 'white' : '#64748b'};
     flex-shrink: 0;
+    font-size: 12px;
   }
 `;
 
@@ -50,71 +54,74 @@ const ToolName = styled.div`
 const ToolPreview = styled.div`
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  color: ${props => props.isUser ? 'rgba(255, 255, 255, 0.9)' : '#666'};
-  margin-top: 4px;
+  gap: 4px;
+  font-size: 11px;
+  color: ${props => props.isUser ? 'rgba(255, 255, 255, 0.8)' : '#64748b'};
+  margin-left: 18px;
   font-style: italic;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 300px;
+  max-width: 250px;
 `;
 
-// 工具调用内容
+// 工具调用内容 - 去掉多余padding
 const ToolCallContent = styled.div`
-  padding: ${props => props.expanded ? '15px' : '0'};
-  max-height: ${props => props.expanded ? '500px' : '0'};
+  padding: ${props => props.expanded ? '12px' : '0'};
+  max-height: ${props => props.expanded ? '300px' : '0'};
   overflow: hidden;
   transition: all 0.3s ease-in-out;
   opacity: ${props => props.expanded ? '1' : '0'};
-  width: 100%;
+  background: ${props => props.isUser ? 'rgba(0, 0, 0, 0.1)' : 'white'};
 `;
 
-// 工具调用结果容器
+// 工具调用结果容器 - 简化布局
 const ResultContainer = styled.div`
-  display: grid;
-  grid-template-columns: auto 1fr;
-  grid-gap: 10px;
-  width: 100%;
-  overflow-x: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 `;
 
-// 工具调用标签
+// 工具调用标签 - 更小的标签
 const Label = styled.div`
-  font-size: 13px;
-  font-weight: 500;
-  color: ${props => props.isUser ? 'rgba(255, 255, 255, 0.9)' : '#666'};
-  padding: 6px 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: ${props => props.isUser ? 'rgba(255, 255, 255, 0.9)' : '#64748b'};
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
 `;
 
-// 工具调用值
+// 工具调用值 - 紧凑设计
 const Value = styled.div`
-  font-family: monospace;
-  background: ${props => props.isUser ? 'rgba(0, 0, 0, 0.2)' : 'rgba(0, 0, 0, 0.05)'};
-  padding: 6px 10px;
-  border-radius: 4px;
-  font-size: 13px;
-  color: ${props => props.isUser ? 'rgba(255, 255, 255, 0.9)' : '#333'};
+  font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Roboto Mono', monospace;
+  background: ${props => props.isUser ? 'rgba(0, 0, 0, 0.2)' : '#f8fafc'};
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: ${props => props.isUser ? 'rgba(255, 255, 255, 0.9)' : '#374151'};
   overflow-x: auto;
   position: relative;
-  max-height: 300px;
+  max-height: 200px;
   overflow-y: auto;
   white-space: pre-wrap;
   word-break: break-word;
+  border: 1px solid ${props => props.isUser ? 'rgba(255, 255, 255, 0.1)' : '#e5e7eb'};
+  line-height: 1.4;
 `;
 
-// 工具结果状态显示
+// 工具结果状态显示 - 更小的徽章
 const ResultStatus = styled.span`
   padding: 2px 6px;
-  border-radius: 4px;
-  font-size: 12px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 500;
   background-color: ${props => 
-    props.isError ? (props.isUser ? 'rgba(255, 100, 100, 0.3)' : 'rgba(255, 100, 100, 0.1)') : 
-    (props.isUser ? 'rgba(100, 255, 100, 0.3)' : 'rgba(100, 255, 100, 0.1)')};
+    props.isError ? '#fef2f2' : '#f0fdf4'};
   color: ${props => 
-    props.isError ? (props.isUser ? 'white' : '#d32f2f') : 
-    (props.isUser ? 'white' : '#2e7d32')};
+    props.isError ? '#dc2626' : '#16a34a'};
+  border: 1px solid ${props => 
+    props.isError ? '#fecaca' : '#bbf7d0'};
   margin-left: 8px;
   display: inline-flex;
   align-items: center;
@@ -183,18 +190,15 @@ const getQueryPreview = (args) => {
   return null;
 };
 
-// 在最外层容器加样式
+// 在最外层容器加样式 - 去掉多余margin
 const ToolCallWrapper = styled.div`
   width: 100%;
-  max-width: 600px;
-  min-height: 80px;
   box-sizing: border-box;
-  margin-bottom: 12px;
+  margin: 4px 0;
   display: flex;
   flex-direction: column;
   justify-content: flex-start;
   align-items: stretch;
-  background: none;
 `;
 
 /**
@@ -203,22 +207,12 @@ const ToolCallWrapper = styled.div`
  * @param {Object} props.data 工具调用数据
  * @param {boolean} props.isUser 是否为用户消息
  */
-const ToolCallDisplay = ({ data, isUser }) => {
-  // 状态和数据处理
-  const [expanded, setExpanded] = useState(false);
+const ToolCallDisplay = ({ data, isUser, compact = false }) => {
+  // 状态和数据处理 - 默认收起，用户可以点击展开查看详情
+  const [expanded, setExpanded] = useState(false); // 默认收起
   
   // 如果数据是字符串，尝试解析
   let toolData = data;
-  // if (typeof data === 'string') {
-  //   try {
-  //     toolData = JSON.parse(data);
-  //     console.log('工具数据(字符串解析后):', toolData); // 调试日志
-  //   } catch (e) {
-  //     console.warn('无法解析工具数据:', e, '原始数据:', data);
-  //   }
-  // } else {
-  //   console.log('工具数据(对象):', toolData); // 调试日志
-  // }
   
   // 提取工具信息
   const toolName = toolData?.tool_name || toolData?.name || '未知工具';
@@ -228,18 +222,13 @@ const ToolCallDisplay = ({ data, isUser }) => {
   const hasError = Boolean(error);
   const hasResult = Boolean(result && Object.keys(result).length > 0);
   
-  // console.log('工具名称:', toolName); // 调试日志
-  // console.log('参数:', args); // 调试日志
-  // console.log('结果:', result); // 调试日志
-  // console.log('错误:', error); // 调试日志
-  
   // 格式化JSON为字符串
   const formatJSON = (obj) => {
     try {
       if (obj === null || typeof obj === 'undefined') return "{}";
       return JSON.stringify(obj, null, 2);
     } catch (e) {
-      console.error('JSON格式化错误:', e, '对象:', obj); // 调试错误
+      console.error('JSON格式化错误:', e, '对象:', obj);
       return String(obj || "{}");
     }
   };
@@ -284,69 +273,110 @@ const ToolCallDisplay = ({ data, isUser }) => {
   // 获取简短预览
   const queryPreview = getQueryPreview(args);
   
+  // 如果是 compact 模式，返回简化版本
+  if (compact) {
+    return (
+      <div style={{ 
+        display: 'flex', 
+        alignItems: 'center', 
+        gap: '8px',
+        padding: '6px 0',
+        fontSize: '13px',
+        color: '#6b7280'
+      }}>
+        {getToolIcon(toolName)}
+        <span style={{ fontWeight: '500' }}>{getDisplayName()}</span>
+        {queryPreview && <span style={{ fontStyle: 'italic' }}>{queryPreview}</span>}
+        {hasError && <span style={{ color: '#dc2626' }}>失败</span>}
+        {hasResult && !hasError && <span style={{ color: '#059669' }}>成功</span>}
+        {!hasResult && !hasError && <span style={{ color: '#d97706' }}>处理中</span>}
+      </div>
+    );
+  }
+  
   return (
     <ToolCallWrapper>
-      <ToolCallContainer isUser={isUser}>
+      <ToolCallContainer isUser={isUser} compact={compact}>
         <ToolCallHeader 
           isUser={isUser} 
+          expanded={expanded}
           onClick={() => setExpanded(!expanded)}
         >
-          <div>
+          <div style={{ flex: 1, minWidth: 0 }}>
             <ToolName isUser={isUser}>
               {getToolIcon(toolName)}
               {getDisplayName()}
-              {hasError && <ResultStatus isUser={isUser} isError={true}>失败</ResultStatus>}
-              {hasResult && !hasError && <ResultStatus isUser={isUser} isError={false}>成功</ResultStatus>}
-              {!hasResult && !hasError && <ResultStatus isUser={isUser} isError={false}>处理中</ResultStatus>}
+              {hasError && <ResultStatus isError={true}>失败</ResultStatus>}
+              {hasResult && !hasError && <ResultStatus isError={false}>成功</ResultStatus>}
+              {!hasResult && !hasError && <ResultStatus isError={false}>处理中</ResultStatus>}
             </ToolName>
-            {queryPreview && (
+            {/* 只在展开时显示查询预览 */}
+            {expanded && queryPreview && (
               <ToolPreview isUser={isUser}>
                 {queryPreview}
               </ToolPreview>
             )}
           </div>
-          {expanded ? <FaChevronUp /> : <FaChevronDown />}
+          <div style={{ flexShrink: 0, marginLeft: '8px' }}>
+            {expanded ? <FaChevronUp size={12} /> : <FaChevronDown size={12} />}
+          </div>
         </ToolCallHeader>
         
-        <ToolCallContent expanded={expanded}>
+        <ToolCallContent expanded={expanded} isUser={isUser}>
           <ResultContainer>
-            <Label isUser={isUser}>参数:</Label>
-            <Value isUser={isUser}>
-              {formatJSON(args)}
-              <FaCopy 
-                size={12} 
-                style={{
-                  position: 'absolute',
-                  top: 6,
-                  right: 6,
-                  cursor: 'pointer',
-                  opacity: 0.7
-                }}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  copyToClipboard(formatJSON(args));
-                }}
-              />
-            </Value>
+            {/* 只在有参数且参数不为空时显示 */}
+            {Object.keys(args).length > 0 && (
+              <div>
+                <Label isUser={isUser}>参数</Label>
+                <Value isUser={isUser}>
+                  {formatJSON(args)}
+                  <FaCopy 
+                    size={10} 
+                    style={{
+                      position: 'absolute',
+                      top: 6,
+                      right: 6,
+                      cursor: 'pointer',
+                      opacity: 0.6,
+                      transition: 'opacity 0.2s'
+                    }}
+                    onMouseEnter={(e) => e.target.style.opacity = '1'}
+                    onMouseLeave={(e) => e.target.style.opacity = '0.6'}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      copyToClipboard(formatJSON(args));
+                    }}
+                  />
+                </Value>
+              </div>
+            )}
             
-            <Label isUser={isUser}>{hasError ? '错误:' : '结果:'}</Label>
-            <Value isUser={isUser}>
-              {hasError ? error : (resultContent || formatJSON(result) || '无结果')}
-              <FaCopy 
-                size={12} 
-                style={{
-                  position: 'absolute',
-                  top: 6,
-                  right: 6,
-                  cursor: 'pointer',
-                  opacity: 0.7
-                }}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  copyToClipboard(hasError ? error : formatJSON(result));
-                }}
-              />
-            </Value>
+            {/* 显示结果或错误 */}
+            {(hasResult || hasError) && (
+              <div>
+                <Label isUser={isUser}>{hasError ? '错误' : '结果'}</Label>
+                <Value isUser={isUser}>
+                  {hasError ? error : (resultContent || formatJSON(result) || '无结果')}
+                  <FaCopy 
+                    size={10} 
+                    style={{
+                      position: 'absolute',
+                      top: 6,
+                      right: 6,
+                      cursor: 'pointer',
+                      opacity: 0.6,
+                      transition: 'opacity 0.2s'
+                    }}
+                    onMouseEnter={(e) => e.target.style.opacity = '1'}
+                    onMouseLeave={(e) => e.target.style.opacity = '0.6'}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      copyToClipboard(hasError ? error : (resultContent || formatJSON(result)));
+                    }}
+                  />
+                </Value>
+              </div>
+            )}
           </ResultContainer>
         </ToolCallContent>
       </ToolCallContainer>

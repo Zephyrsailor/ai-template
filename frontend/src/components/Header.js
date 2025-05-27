@@ -7,6 +7,7 @@ import { IoSettingsOutline, IoSettingsSharp, IoHelpCircleOutline, IoHelpCircle }
 import styled from 'styled-components';
 import { checkAuthStatus } from '../api/index';
 import { logout } from '../api/auth';
+import EnhancedLLMSelector from './EnhancedLLMSelector';
 
 // Common styled components that can be reused across the application
 export const TooltipContainer = styled.div`
@@ -209,7 +210,7 @@ const Header = ({
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const userMenuRef = React.useRef(null);
-
+  
   // 新增：点击外部关闭菜单
   React.useEffect(() => {
     if (!isUserMenuOpen) return;
@@ -277,9 +278,12 @@ const Header = ({
 
   return (
     <header className="flex items-center justify-between py-3 px-4 bg-white border-b border-gray-100 shadow-sm z-10 w-full">
-      {/* 左侧部分 - 空白或者可以放置其他元素 */}
+      {/* 左侧部分 - LLM选择器 */}
       <div className="flex items-center">
-        {/* 移除了AI助手标题和模型选择器 */}
+        <EnhancedLLMSelector 
+          selectedModel={selectedModel}
+          onModelChange={onModelChange}
+        />
       </div>
       
       {/* 中间部分 - 状态指示器 */}

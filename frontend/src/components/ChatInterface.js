@@ -6,11 +6,13 @@ import Sidebar from './Sidebar';
 import MessageBubble from './MessageBubble';
 import ThinkingBubble from './ThinkingBubble';
 import ToolCallDisplay from './ToolCallDisplay'; // Import ToolCallDisplay
+// import AssistantMessage from './AssistantMessage'; // 暂时移除，恢复简单显示
 import { CgSpinner } from 'react-icons/cg';
 import { FiUser } from 'react-icons/fi';
 import { RiRobot2Line } from 'react-icons/ri';
+import axios from 'axios';
 // 导入API函数
-import { fetchConversations, createConversation, deleteConversation, getConversationDetails } from '../api';
+import { fetchConversations, createConversation, deleteConversation, getConversationDetails, fetchDefaultLLMConfig } from '../api';
 
 // 过滤标准消息对象，确保 role 和 content 的有效性
 const filterValidMessages = arr => (arr || []).filter(m =>
@@ -25,7 +27,8 @@ const WELCOME_MESSAGE = {
   content: '你好！我是AI助手，有什么我可以帮助你的？',
   role: 'assistant',
   createdAt: new Date().toISOString(),
-  type: 'content' // Add type for welcome message
+  type: 'content', // Add type for welcome message
+  messageId: 'welcome' // Add messageId for welcome message
 };
 
 const ChatInterface = ({
@@ -36,7 +39,9 @@ const ChatInterface = ({
   systemMessage = '',
   autoFocusInput = false,
   onOpenSettings,
-  isThinking: externalIsThinking
+  isThinking: externalIsThinking,
+  selectedModel: externalSelectedModel,
+  onModelChange: externalOnModelChange
 }) => {
   const [conversations, setConversations] = useState([
     { id: 'default', title: '', messages: [WELCOME_MESSAGE], isNew: true }
@@ -49,22 +54,31 @@ const ChatInterface = ({
   const [isStreaming, setIsStreaming] = useState(false); // 是否正在流式响应
   const [currentReader, setCurrentReader] = useState(null); // 当前的流式读取器
   const [abortController, setAbortController] = useState(null); // 用于取消请求的控制器
+  const [selectedModel, setSelectedModel] = useState(externalSelectedModel || null); // 选中的模型
   const messagesEndRef = useRef(null);
 
   // Get active conversation
   const activeConversation = conversations.find(c => c.id === activeConversationId) || conversations[0];
   messages = activeConversation?.messages || [];
 
-  // Scroll to bottom when messages change
+  // 将消息分组，将连续的助手消息（thinking、tool_call、content）组合在一起
+  // 移除复杂的消息分组逻辑，直接使用消息数组
+
+  // Scroll to bottom when messages change - 优化为更频繁的滚动
   useEffect(() => {
-    // 只在新消息到来时自动滚动，用户手动滚动时不干扰
-    if (messagesEndRef.current && messages.length > 0) {
-      const lastMsg = messages[messages.length - 1];
-      if (lastMsg && lastMsg.role === 'assistant') {
+    if (messagesEndRef.current) {
+      // 在流式响应期间更频繁地滚动
+      if (isStreaming || isThinking) {
         messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+      } else if (messages.length > 0) {
+        // 非流式状态下的正常滚动
+        const lastMsg = messages[messages.length - 1];
+        if (lastMsg && lastMsg.role === 'assistant') {
+          messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+        }
       }
     }
-  }, [messages]);
+  }, [messages, isStreaming, isThinking, thinking]);
 
   // 使用外部传入的isThinking状态更新内部状态
   useEffect(() => {
@@ -72,6 +86,53 @@ const ChatInterface = ({
       setIsThinking(externalIsThinking);
     }
   }, [externalIsThinking]);
+
+  // 同步外部传入的selectedModel状态
+  useEffect(() => {
+    if (externalSelectedModel !== undefined) {
+      setSelectedModel(externalSelectedModel);
+    }
+  }, [externalSelectedModel]);
+
+  // 初始化默认模型
+  useEffect(() => {
+    const initializeDefaultModel = async () => {
+      if (!selectedModel) {
+        try {
+          const token = localStorage.getItem('authToken');
+          if (token) {
+            // 尝试获取用户的默认配置
+            const defaultConfig = await fetchDefaultLLMConfig();
+
+            if (defaultConfig && defaultConfig.model_name) {
+              setSelectedModel(defaultConfig.model_name);
+              // 同时调用外部的onModelChange
+              if (externalOnModelChange) {
+                externalOnModelChange(defaultConfig.model_name);
+              }
+              return;
+            }
+          }
+          
+          // 如果没有用户默认配置，设置一个系统默认值
+          setSelectedModel('gpt-3.5-turbo');
+          // 同时调用外部的onModelChange
+          if (externalOnModelChange) {
+            externalOnModelChange('gpt-3.5-turbo');
+          }
+        } catch (error) {
+          console.error('初始化默认模型失败:', error);
+          setSelectedModel('gpt-3.5-turbo');
+          // 同时调用外部的onModelChange
+          if (externalOnModelChange) {
+            externalOnModelChange('gpt-3.5-turbo');
+          }
+        }
+      }
+    };
+
+    initializeDefaultModel();
+  }, [selectedModel, externalOnModelChange]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -102,14 +163,10 @@ const ChatInterface = ({
       
       if (conversationId) {
         // 不等待结果，立即执行
-        fetch(`http://localhost:8000/api/chat/stop?conversation_id=${conversationId}`, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${localStorage.getItem('authToken') || ''}`,
-          }
-        }).catch(error => {
-          console.warn('后端停止API调用失败:', error);
-        });
+        axios.post(`/api/chat/stop?conversation_id=${conversationId}`)
+          .catch(error => {
+            console.warn('后端停止API调用失败:', error);
+          });
       }
 
       // 4. 立即重置所有状态
@@ -133,9 +190,16 @@ const ChatInterface = ({
 
   const handleSendMessage = async (messageText, options = {}) => {
     // 解构选项获取知识库和MCP服务器ID以及网页搜索选项
-    const { knowledgeBaseIds = [], mcpServerIds = [], useWebSearch = false } = options;
+    const { knowledgeBaseIds = [], mcpServerIds = [], useWebSearch = false, modelId = null } = options;
 
     if (!messageText.trim()) return;
+
+    // 调试信息：确认模型ID
+    const finalModelId = modelId || selectedModel;
+    console.log('ChatInterface - handleSendMessage:');
+    console.log('  options.modelId:', modelId);
+    console.log('  selectedModel:', selectedModel);
+    console.log('  finalModelId:', finalModelId);
 
     // 重置思考相关状态
     setCompletedThinking(null);
@@ -150,11 +214,27 @@ const ChatInterface = ({
       // 保存使用的知识库和服务器IDs，方便展示
       knowledgeBaseIds: knowledgeBaseIds.length > 0 ? knowledgeBaseIds : [],
       mcpServerIds: mcpServerIds.length > 0 ? mcpServerIds : [],
-      useWebSearch: useWebSearch
+      useWebSearch: useWebSearch,
+      messageId: `user-${Date.now()}` // 用户消息独立的messageId
     };
+    
+    // 为这一轮AI回答生成统一的messageId
+    const streamMessageId = `stream-${Date.now()}`;
 
     // 更新对话中的消息
     updateConversation(activeConversationId, userMessage);
+    
+    // 立即显示一个"正在思考"的助手消息框，提升用户体验
+    const loadingMessageId = `loading-${Date.now()}`;
+    updateConversation(activeConversationId, {
+      id: loadingMessageId,
+      role: 'assistant',
+      content: '',
+      createdAt: new Date().toISOString(),
+      type: 'loading', // 特殊类型，表示正在加载
+      isLoading: true,
+      messageId: streamMessageId // 使用统一的messageId
+    });
 
     // 获取历史记录(不包括当前用户消息)
     let history = messages.filter(msg => msg.role === 'user' || msg.role === 'assistant')
@@ -193,10 +273,15 @@ const ChatInterface = ({
     setIsLoading(true);
     setIsStreaming(true); // 开始流式响应
     setThinking(''); // 清空思考内容
-    setIsThinking(true); // 开始思考
+    setIsThinking(false); // 先不设置思考状态，等收到thinking数据再设置
 
     let currentMessageId = null;
     let currentMessageType = null;
+    let hasReceivedResponse = false; // 跟踪是否收到任何响应
+    let receivedOrderCounter = 0; // 接收顺序计数器
+    
+    // 立即滚动到底部，准备显示新内容
+    setTimeout(() => scrollToBottom(), 100);
 
     // 创建AbortController用于取消请求
     const controller = new AbortController();
@@ -204,11 +289,10 @@ const ChatInterface = ({
 
     try {
       // API端点
-      const API_URL = 'http://localhost:8000/api/chat/stream';
       const currentConversation = conversations.find(c => c.id === activeConversationId);
       const conversationId = currentConversation?.serverId;
       
-      const response = await fetch(API_URL, {
+      const response = await fetch('http://localhost:8000/api/chat/stream', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -222,6 +306,7 @@ const ChatInterface = ({
           mcp_server_ids: mcpServerIds,
           use_tools: mcpServerIds.length > 0,
           use_web_search: useWebSearch,
+          model_id: finalModelId, // 使用确定的模型ID
           conversation_id: conversationId,
           conversation_title:
             currentConversation?.title ||
@@ -303,26 +388,48 @@ const ChatInterface = ({
                 continue;
               }
 
+              // 标记已收到响应
+              if (!hasReceivedResponse) {
+                hasReceivedResponse = true;
+                setIsLoading(false); // 收到第一个响应后立即取消loading状态
+                
+                // 移除loading消息
+                setConversations(prev =>
+                  prev.map(conv => {
+                    if (conv.id === activeConversationId) {
+                      const updatedMessages = conv.messages.filter(msg => msg.type !== 'loading');
+                      return { ...conv, messages: updatedMessages };
+                    }
+                    return conv;
+                  })
+                );
+              }
+
               // 判断是否需要新建消息块
               if (type !== currentMessageType) {
                 // 新建消息块
                 currentMessageId = `${type}-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
                 currentMessageType = type;
+                
                 if (type === 'thinking' || type === 'reasoning') {
+                  receivedOrderCounter++; // 增加接收顺序
                   updateConversation(activeConversationId, {
                     id: currentMessageId,
                     role: 'assistant',
                     thinking: chunkData.data || "",
                     createdAt: new Date().toISOString(),
+                    receivedOrder: receivedOrderCounter, // 添加接收顺序
                     type: 'thinking',
-                    isCompleted: false
+                    isCompleted: false,
+                    messageId: streamMessageId // 使用统一的messageId
                   });
                   setThinking(chunkData.data || "");
                   setIsThinking(true);
                 } else if (type === 'tool_call') {
                   console.log("tool_call", chunkData.data)
                   let tools = JSON.parse(chunkData.data)  
-                  tools.forEach(tool => {
+                  tools.forEach((tool, index) => {
+                    receivedOrderCounter++; // 每个工具调用都增加接收顺序
                     updateConversation(activeConversationId, {
                       id: tool.id,
                       role: 'assistant',
@@ -330,7 +437,9 @@ const ChatInterface = ({
                       name: tool.name || tool.tool_name,
                       arguments: tool.arguments || {},
                       createdAt: new Date().toISOString(),
-                      type: 'tool_call'
+                      receivedOrder: receivedOrderCounter, // 添加接收顺序
+                      type: 'tool_call',
+                      messageId: streamMessageId // 使用统一的messageId
                     });
                   });
                 } else if (type === 'tool_result') {
@@ -353,15 +462,29 @@ const ChatInterface = ({
                     })
                   );
                 } else if (type === 'content') {
+                  receivedOrderCounter++; // 增加接收顺序
                   updateConversation(activeConversationId, {
                     id: currentMessageId,
                     role: 'assistant',
                     content: chunkData.data || "",
                     createdAt: new Date().toISOString(),
+                    receivedOrder: receivedOrderCounter, // 添加接收顺序
                     type: 'content',
                     knowledgeBaseIds: userMessage.knowledgeBaseIds,
                     mcpServerIds: userMessage.mcpServerIds,
-                    useWebSearch: userMessage.useWebSearch
+                    useWebSearch: userMessage.useWebSearch,
+                    messageId: streamMessageId // 使用统一的messageId
+                  });
+                } else if (type === 'reference') {
+                  receivedOrderCounter++; // 增加接收顺序
+                  updateConversation(activeConversationId, {
+                    id: `reference-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+                    role: 'assistant',
+                    content: chunkData.data || "",
+                    createdAt: new Date().toISOString(),
+                    receivedOrder: receivedOrderCounter, // 添加接收顺序
+                    type: 'reference',
+                    messageId: streamMessageId // 使用统一的messageId
                   });
                 }
               } else {
@@ -426,6 +549,17 @@ const ChatInterface = ({
       console.error('Error:', error);
       setIsThinking(false);
 
+      // 移除loading消息
+      setConversations(prev =>
+        prev.map(conv => {
+          if (conv.id === activeConversationId) {
+            const updatedMessages = conv.messages.filter(msg => msg.type !== 'loading');
+            return { ...conv, messages: updatedMessages };
+          }
+          return conv;
+        })
+      );
+
       // 如果是用户主动取消的请求，不显示错误消息
       if (error.name === 'AbortError') {
         console.log('请求被用户取消');
@@ -467,6 +601,15 @@ const ChatInterface = ({
       setCurrentReader(null);
       setAbortController(null);
       setIsThinking(false);
+      
+      // 流式响应结束后同步对话历史，确保前端状态与后端一致
+      const currentConv = conversations.find(c => c.id === activeConversationId);
+      if (currentConv?.serverId) {
+        // 延迟一下再同步，确保后端已经完全保存
+        setTimeout(() => {
+          syncConversationHistory(activeConversationId);
+        }, 1000);
+      }
     }
   };
 
@@ -609,6 +752,11 @@ const ChatInterface = ({
           return conv;
         })
       );
+      
+      // 延迟同步对话历史，直接传入serverId避免状态更新时序问题
+      setTimeout(() => {
+        syncConversationHistory(conversationId, serverId);
+      }, 1500);
     } catch (error) {
       console.error('Failed to update conversation after creation:', error);
     }
@@ -621,6 +769,7 @@ const ChatInterface = ({
         console.log("Load conversation response:", response);
 
         if (response.success && Array.isArray(response.data)) {
+
           const serverConversations = response.data.map(conv => {
             const convMessages = Array.isArray(conv.messages) ? conv.messages : [];
 
@@ -629,52 +778,63 @@ const ChatInterface = ({
               serverId: conv.id,
               title: conv.title || "New Conversation",
               messages: convMessages.length > 0
-                ? convMessages.flatMap(msg => {
-                    const thinkingArr = [];
-                    const contentArr = [];
-                    const toolArr = [];
-                    // 推理
+                ? convMessages.flatMap((msg, msgIndex) => {
+                    const formattedEntries = [];
+                    const baseTimestamp = msg.timestamp || new Date().toISOString();
+                    
+                    // 简化分组逻辑：每个后端Message使用其ID作为分组依据
+                    const messageGroupId = `backend-msg-${msg.id || msgIndex}`;
+                    
+                    // 1. 添加思考消息（如果存在）
                     if (msg.thinking) {
-                      thinkingArr.push({
+                      formattedEntries.push({
                         id: `thinking-${msg.id || Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
                         role: 'assistant',
                         thinking: msg.thinking,
-                        createdAt: msg.timestamp || new Date().toISOString(),
+                        createdAt: baseTimestamp,
                         type: 'thinking',
-                        isCompleted: true
+                        isCompleted: true,
+                        isHistorical: true,
+                        messageId: messageGroupId
                       });
                     }
-                    // 内容
+                    
+                    // 2. 添加内容消息（如果存在）
                     if (msg.content) {
-                      contentArr.push({
-                        id: msg.id || `msg-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+                      formattedEntries.push({
+                        id: `content-${msg.id || Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
                         role: msg.role,
                         content: msg.content,
-                        createdAt: msg.timestamp || new Date().toISOString(),
+                        createdAt: baseTimestamp,
                         type: 'content',
                         knowledgeBaseIds: msg.metadata?.knowledge_base_ids || [],
                         mcpServerIds: msg.metadata?.mcp_server_ids || [],
                         useWebSearch: !!msg.metadata?.web_search,
-                        isError: msg.isError
+                        isError: msg.isError,
+                        isHistorical: true,
+                        messageId: messageGroupId
                       });
                     }
-                    // 工具
+                    
+                    // 3. 添加工具调用（如果存在）
                     if (Array.isArray(msg.tool_calls)) {
-                      msg.tool_calls.forEach(toolCall => {
-                        toolArr.push({
-                          id: `tool-${toolCall.id || Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+                      msg.tool_calls.forEach((toolCall, index) => {
+                        formattedEntries.push({
+                          id: toolCall.id || `tool-${msg.id}-${index}-${Math.random().toString(36).substring(2, 9)}`,
                           role: 'assistant',
                           name: toolCall.name || toolCall.tool_name,
                           arguments: toolCall.arguments || {},
                           result: toolCall.result,
                           error: toolCall.error,
-                          timestamp: toolCall.timestamp || new Date().toISOString(),
-                          type: toolCall.result !== undefined || toolCall.error !== undefined ? 'tool_result' : 'tool_call'
+                          createdAt: baseTimestamp,
+                          type: 'tool_call',
+                          isHistorical: true,
+                          messageId: messageGroupId
                         });
                       });
                     }
-                    // 合并顺序：推理 > 内容 > 工具
-                    return [...thinkingArr, ...contentArr, ...toolArr];
+                    
+                    return formattedEntries;
                   })
                 : [WELCOME_MESSAGE],
               isNew: false
@@ -682,6 +842,16 @@ const ChatInterface = ({
           });
 
           console.log("Processed conversation data:", serverConversations);
+          
+          // 调试：打印第一个会话的消息结构
+          if (serverConversations.length > 0) {
+            console.log("第一个会话的消息结构:", serverConversations[0].messages.map(m => ({
+              id: m.id,
+              messageId: m.messageId,
+              role: m.role,
+              type: m.type
+            })));
+          }
 
           setConversations(prev => {
             const newLocalConvs = prev.filter(c => c.isNew);
@@ -729,6 +899,269 @@ const ChatInterface = ({
     }
   };
 
+  // 重新设计消息显示 - 完善的业内最佳实践方案
+  const renderMessage = (message, index) => {
+    if (message.role === 'user') {
+      // 用户消息直接渲染，不需要分组
+      return (
+        <div key={message.messageId || message.id} className="flex items-start gap-3 justify-end mb-6">
+          <div className="max-w-[85%] order-1">
+            <MessageBubble
+              content={message.content}
+              isUser={true}
+              knowledgeBaseIds={message.knowledgeBaseIds}
+              mcpServerIds={message.mcpServerIds}
+              isError={message.isError}
+              useWebSearch={message.useWebSearch}
+            />
+            <div className="text-xs text-gray-400 mt-1 px-1">
+              {new Date(message.createdAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+            </div>
+          </div>
+          <div className="w-9 h-9 rounded-full bg-gray-100 flex items-center justify-center flex-shrink-0 order-2">
+            <FiUser size={18} className="text-gray-700" />
+          </div>
+        </div>
+      );
+    } else if (message.role === 'assistant') {
+      // 按messageId分组，同一个后端Message的所有组件在一个框框里
+      const currentGroup = [];
+      let startIndex = index;
+      
+      // 向前查找，找到同一个messageId的开始
+      while (startIndex > 0 && 
+             messages[startIndex - 1]?.role === 'assistant' && 
+             messages[startIndex - 1]?.messageId === message.messageId) {
+        startIndex--;
+      }
+      
+      // 收集同一个messageId的所有消息
+      let endIndex = startIndex;
+      while (endIndex < messages.length && 
+             messages[endIndex]?.role === 'assistant' && 
+             messages[endIndex]?.messageId === message.messageId) {
+        currentGroup.push(messages[endIndex]);
+        endIndex++;
+      }
+      
+      // 只在第一个消息时渲染整个组
+      if (index === startIndex) {
+
+        
+        // 按接收顺序显示，不强制排序（保持流式响应的自然顺序）
+        const orderedGroup = [...currentGroup];
+        
+        return (
+          <div key={`group-${message.messageId || message.id}`} className="flex items-start gap-3 mb-6">
+            <div className="w-9 h-9 rounded-full bg-purple-100 flex items-center justify-center flex-shrink-0">
+              <RiRobot2Line size={18} className="text-purple-700" />
+            </div>
+            <div className="max-w-[85%] bg-gray-50 rounded-2xl p-4 border border-gray-200">
+              {/* 按正确顺序显示同一Message的所有组件 */}
+              {orderedGroup.map((msg, idx) => (
+                <div key={msg.id} className={idx > 0 ? "mt-3" : ""}>
+                  {msg.type === 'thinking' && (
+                    <ThinkingBubble
+                      thinking={msg.thinking}
+                      isThinking={!msg.isCompleted}
+                      isHistorical={msg.isHistorical}
+                      isCompleted={msg.isCompleted}
+                      autoCollapse={true}
+                      preserveContent={true}
+                    />
+                  )}
+                  {msg.type === 'tool_call' && (
+                    <ToolCallDisplay 
+                      data={{
+                        tool_name: msg.name,
+                        arguments: msg.arguments,
+                        result: msg.result,
+                        error: msg.error
+                      }} 
+                      isUser={false} 
+                      compact={false}
+                    />
+                  )}
+                  {msg.type === 'content' && (
+                    <MessageBubble
+                      content={msg.content}
+                      isUser={false}
+                      knowledgeBaseIds={msg.knowledgeBaseIds}
+                      mcpServerIds={msg.mcpServerIds}
+                      isError={msg.isError}
+                      useWebSearch={msg.useWebSearch}
+                      compact={true}
+                    />
+                  )}
+                  {msg.type === 'loading' && (
+                    <div className="flex items-center gap-2 text-gray-500 text-sm">
+                      <div className="flex space-x-1">
+                        <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
+                        <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{animationDelay: '0.1s'}}></div>
+                        <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{animationDelay: '0.2s'}}></div>
+                      </div>
+                      <span>正在思考...</span>
+                    </div>
+                  )}
+                </div>
+              ))}
+              
+              {/* 时间戳 */}
+              <div className="text-xs text-gray-400 mt-3 pt-2 border-t border-gray-200">
+                {new Date(orderedGroup[orderedGroup.length - 1]?.createdAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+              </div>
+            </div>
+          </div>
+        );
+      }
+      
+      // 其他消息返回null，因为已经在组中渲染了
+      return null;
+    }
+    return null;
+  };
+
+  // 格式化后端消息为前端格式的通用函数
+  const formatBackendMessages = (backendMessages) => {
+    const formattedMessages = [];
+    let currentAssistantGroup = null;
+    let assistantGroupCounter = 0;
+    
+    backendMessages.forEach((msg, msgIndex) => {
+      const baseTimestamp = msg.timestamp || new Date().toISOString();
+      
+      if (msg.role === 'user') {
+        // 用户消息：结束当前assistant组，添加用户消息
+        if (currentAssistantGroup) {
+          // 将当前assistant组的所有组件添加到formattedMessages
+          formattedMessages.push(...currentAssistantGroup.entries);
+          currentAssistantGroup = null;
+        }
+        
+        // 添加用户消息
+        formattedMessages.push({
+          id: `content-${msg.id || Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+          role: msg.role,
+          content: msg.content,
+          createdAt: baseTimestamp,
+          type: 'content',
+          knowledgeBaseIds: msg.metadata?.knowledge_base_ids || [],
+          mcpServerIds: msg.metadata?.mcp_server_ids || [],
+          useWebSearch: !!msg.metadata?.web_search,
+          isError: msg.isError,
+          isHistorical: true,
+          messageId: `user-msg-${msg.id || msgIndex}`
+        });
+      } else if (msg.role === 'assistant') {
+        // Assistant消息：合并到当前组或创建新组
+        if (!currentAssistantGroup) {
+          assistantGroupCounter++;
+          currentAssistantGroup = {
+            messageId: `assistant-group-${assistantGroupCounter}`,
+            entries: []
+          };
+        }
+        
+        // 添加思考消息（如果存在）
+        if (msg.thinking) {
+          currentAssistantGroup.entries.push({
+            id: `thinking-${msg.id || Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+            role: 'assistant',
+            thinking: msg.thinking,
+            createdAt: baseTimestamp,
+            type: 'thinking',
+            isCompleted: true,
+            isHistorical: true,
+            messageId: currentAssistantGroup.messageId
+          });
+        }
+        
+        // 添加内容消息（如果存在）
+        if (msg.content) {
+          currentAssistantGroup.entries.push({
+            id: `content-${msg.id || Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+            role: msg.role,
+            content: msg.content,
+            createdAt: baseTimestamp,
+            type: 'content',
+            knowledgeBaseIds: msg.metadata?.knowledge_base_ids || [],
+            mcpServerIds: msg.metadata?.mcp_server_ids || [],
+            useWebSearch: !!msg.metadata?.web_search,
+            isError: msg.isError,
+            isHistorical: true,
+            messageId: currentAssistantGroup.messageId
+          });
+        }
+        
+        // 添加工具调用（如果存在）
+        if (Array.isArray(msg.tool_calls)) {
+          msg.tool_calls.forEach((toolCall, index) => {
+            currentAssistantGroup.entries.push({
+              id: toolCall.id || `tool-${msg.id}-${index}-${Math.random().toString(36).substring(2, 9)}`,
+              role: 'assistant',
+              name: toolCall.name || toolCall.tool_name,
+              arguments: toolCall.arguments || {},
+              result: toolCall.result,
+              error: toolCall.error,
+              createdAt: baseTimestamp,
+              type: 'tool_call',
+              isHistorical: true,
+              messageId: currentAssistantGroup.messageId
+            });
+          });
+        }
+      }
+    });
+    
+    // 处理最后一个assistant组（如果存在）
+    if (currentAssistantGroup) {
+      formattedMessages.push(...currentAssistantGroup.entries);
+    }
+    
+    return formattedMessages;
+  };
+
+  // 重新同步对话历史，确保前端状态与后端一致
+  const syncConversationHistory = async (conversationId, forceServerId = null) => {
+    try {
+      const currentConv = conversations.find(c => c.id === conversationId);
+      const serverId = forceServerId || currentConv?.serverId;
+      
+      if (!serverId) {
+        console.log('会话还没有服务器ID，跳过同步');
+        return;
+      }
+
+      console.log('开始同步对话历史，服务器ID:', serverId);
+      const response = await getConversationDetails(serverId);
+      
+      if (response.success && response.data) {
+        console.log('获取到最新的对话数据:', response.data);
+        
+        // 使用统一的消息格式化函数
+        const formattedMessages = formatBackendMessages(response.data.messages);
+
+        // 更新对话状态
+        setConversations(prev =>
+          prev.map(conv => {
+            if (conv.id === conversationId) {
+              return {
+                ...conv,
+                messages: formattedMessages,
+                title: response.data.title || conv.title
+              };
+            }
+            return conv;
+          })
+        );
+
+        console.log('对话历史同步完成');
+      }
+    } catch (error) {
+      console.error('同步对话历史失败:', error);
+    }
+  };
+
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-gray-50 fixed top-0 left-0">
       {/* Sidebar */}
@@ -745,49 +1178,8 @@ const ChatInterface = ({
             if (res.success) {
               console.log("Fetched conversation details:", res.data);
 
-              const formattedMessages = res.data.messages.flatMap(msg => { // Use flatMap here too
-                 const formattedEntries = [];
-
-                 if (msg.thinking) {
-                   formattedEntries.push({
-                     id: `thinking-${msg.id || Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
-                     role: 'assistant',
-                     thinking: msg.thinking,
-                     createdAt: msg.timestamp || new Date().toISOString(),
-                     type: 'thinking',
-                     isCompleted: true
-                   });
-                 }
-
-                 if (Array.isArray(msg.tool_calls)) {
-                   msg.tool_calls.forEach(toolCall => {
-                     formattedEntries.push({
-                       id: `tool-${toolCall.id || Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
-                       role: 'assistant',
-                       name: toolCall.name || toolCall.tool_name,
-                       arguments: toolCall.arguments || {},
-                       result: toolCall.result,
-                       error: toolCall.error,
-                       timestamp: toolCall.timestamp || new Date().toISOString(),
-                       type: toolCall.result !== undefined || toolCall.error !== undefined ? 'tool_result' : 'tool_call'
-                     });
-                   });
-                 }
-
-                 formattedEntries.push({
-                   id: msg.id || `msg-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
-                   role: msg.role,
-                   content: msg.content,
-                   createdAt: msg.timestamp || new Date().toISOString(),
-                   type: 'content',
-                   knowledgeBaseIds: msg.metadata?.knowledge_base_ids || [],
-                   mcpServerIds: msg.metadata?.mcp_server_ids || [],
-                   useWebSearch: !!msg.metadata?.web_search,
-                   isError: msg.isError
-                 });
-
-                 return formattedEntries;
-              });
+              // 使用统一的消息格式化函数
+              const formattedMessages = formatBackendMessages(res.data.messages);
 
               setConversations(prev =>
                 prev.map(c => c.id === id ? { ...c, messages: formattedMessages } : c)
@@ -829,6 +1221,16 @@ const ChatInterface = ({
         <Header
           isThinking={isThinking}
           onOpenSettings={onOpenSettings}
+          selectedModel={selectedModel}
+          onModelChange={(model) => {
+            console.log('ChatInterface - onModelChange called with:', model);
+            setSelectedModel(model);
+            // 如果有外部传入的onModelChange，也要调用它
+            if (externalOnModelChange) {
+              externalOnModelChange(model);
+            }
+            console.log('ChatInterface - selectedModel state updated to:', model);
+          }}
         />
 
         {/* Chat area */}
@@ -836,109 +1238,7 @@ const ChatInterface = ({
           <div className="max-w-3xl mx-auto h-full py-4 px-4">
             {/* Messages */}
             <div className="space-y-6 pb-20 static">
-              {messages.map((message, index) => {
-                const isUser = message.role === 'user';
-                const isAssistant = message.role === 'assistant';
-
-                return (
-                  <React.Fragment key={message.id}>
-                    {/* 用户消息 */}
-                    {isUser && (
-                       <div
-                         className="flex items-start gap-3 justify-end"
-                       >
-                         <div className="max-w-[85%] order-1">
-                           <MessageBubble
-                             content={message.content}
-                             isUser={true}
-                             knowledgeBaseIds={message.knowledgeBaseIds}
-                             mcpServerIds={message.mcpServerIds}
-                             isError={message.isError}
-                             useWebSearch={message.useWebSearch}
-                           />
-                           <div className="text-xs text-gray-400 mt-1 px-1">
-                             {new Date(message.createdAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
-                           </div>
-                         </div>
-                         <div className="w-9 h-9 rounded-full bg-gray-100 flex items-center justify-center flex-shrink-0 order-2">
-                           <FiUser size={18} className="text-gray-700" />
-                         </div>
-                       </div>
-                    )}
-
-                    {/* 助手消息条目 */}
-                    {isAssistant && message.type === 'thinking' && (
-                       <div className="flex items-start gap-3">
-                         <div className="w-9 h-9 rounded-full bg-purple-100 flex items-center justify-center flex-shrink-0">
-                           <RiRobot2Line size={20} className="text-purple-700" />
-                         </div>
-                         <div className="max-w-[85%]">
-                           <ThinkingBubble
-                             thinking={message.thinking}
-                             isThinking={!message.isCompleted} // 如果未完成，则显示为正在思考
-                             isCompleted={message.isCompleted}
-                             autoCollapse={true}
-                             isHistorical={message.isCompleted} // 如果已完成，则标记为历史
-                             preserveContent={false}
-                           />
-                         </div>
-                       </div>
-                    )}
-
-                    {isAssistant && (message.type === 'tool_call' || message.type === 'tool_result') && (
-                       <div className="flex items-start gap-3">
-                         <div className="w-9 h-9 rounded-full bg-purple-100 flex items-center justify-center flex-shrink-0">
-                           <RiRobot2Line size={20} className="text-purple-700" />
-                         </div>
-                         <div className="max-w-[85%]">
-                           <ToolCallDisplay
-                             data={message} // Pass the message object which contains tool call/result data
-                             isUser={false}
-                           />
-                         </div>
-                       </div>
-                    )}
-
-                    {isAssistant && message.type === 'content' && (
-                       <div className="flex items-start gap-3">
-                         <div className="w-9 h-9 rounded-full bg-purple-100 flex items-center justify-center flex-shrink-0">
-                           <RiRobot2Line size={20} className="text-purple-700" />
-                         </div>
-                         <div className="max-w-[85%]">
-                           <MessageBubble
-                             content={message.content}
-                             isUser={false}
-                             knowledgeBaseIds={message.knowledgeBaseIds}
-                             mcpServerIds={message.mcpServerIds}
-                             isError={message.isError}
-                             useWebSearch={message.useWebSearch}
-                           />
-                           <div className="text-xs text-gray-400 mt-1 px-1 self-start">
-                             {new Date(message.createdAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
-                           </div>
-                         </div>
-                       </div>
-                    )}
-                  </React.Fragment>
-                );
-              })}
-
-              {/* Active thinking bubble (for the very last, ongoing thinking) */}
-              {/* {isThinking && !completedThinking && (
-                <div className="flex items-start gap-3">
-                  <div className="w-9 h-9 rounded-full bg-purple-100 flex items-center justify-center flex-shrink-0">
-                    <CgSpinner className="w-5 h-5 text-purple-700 animate-spin" />
-                  </div>
-                  <div className="max-w-[85%]">
-                    <ThinkingBubble
-                      thinking={thinking}
-                      isThinking={true}
-                      autoCollapse={false}
-                      preserveContent={true}
-                    />
-                  </div>
-                </div>
-              )} */}
+              {messages.map((message, index) => renderMessage(message, index))}
 
               {/* Scroll anchor */}
               <div ref={messagesEndRef} />
@@ -953,6 +1253,7 @@ const ChatInterface = ({
           isLoading={isThinking || isLoading}
           isStreaming={isStreaming}
           onStopGeneration={handleStopGeneration}
+          selectedModel={selectedModel}
         />
       </div>
     </div>

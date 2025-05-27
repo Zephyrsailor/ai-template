@@ -130,7 +130,7 @@ function App() {
   });
   const [activeSessionId, setActiveSessionId] = useState(chatSessions[0]?.id || 'default');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [selectedModel, setSelectedModel] = useState('default-model');
+  const [selectedModel, setSelectedModel] = useState(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [user, setUser] = useState(null);
   const [anchorEl, setAnchorEl] = useState(null);
@@ -365,23 +365,27 @@ function App() {
           {/* 主聊天区 */}
           <main className="flex-1 flex flex-col items-center justify-start relative overflow-y-auto bg-gray-50">
             {/* 使用Header组件替代原有用户菜单 */}
-            <Header 
+          <Header
               isThinking={false}
               onOpenSettings={handleOpenSettings}
               user={user}
               onLogout={handleLogout}
+              selectedModel={selectedModel}
+              onModelChange={setSelectedModel}
             />
-            
+
             {/* 聊天窗口无历史时居中显示，输入框自动聚焦 */}
             <div className={`flex-1 w-full flex flex-col items-center justify-${currentSession.messages.length === 0 ? 'center' : 'end'}`}>
               <div className="w-full max-w-4xl flex-1 flex flex-col justify-end pt-2 pb-36">
-                <ChatInterface 
+                <ChatInterface
                   assistantName="ChatGPT"
                   messages={currentSession.messages}
                   onMessagesChange={msgs => handleUpdateSession(currentSession.id, msgs)}
                   autoFocusInput={currentSession.messages.length === 0}
                   onOpenSettings={handleOpenSettings}
                   isThinking={false}
+                  selectedModel={selectedModel}
+                  onModelChange={setSelectedModel}
                 />
               </div>
             </div>
@@ -390,11 +394,11 @@ function App() {
             </div>
           </main>
         </div>
-        
+
         {/* 设置面板 */}
-        <Settings 
-          isOpen={isSettingsOpen} 
-          onClose={() => setIsSettingsOpen(false)} 
+        <Settings
+          isOpen={isSettingsOpen}
+          onClose={() => setIsSettingsOpen(false)}
           selectedModel={selectedModel}
           setSelectedModel={setSelectedModel}
         />
@@ -402,4 +406,4 @@ function App() {
     );
 }
 
-export default App; 
+export default App;
