@@ -78,7 +78,8 @@ const ChatMessages = ({
 
   const renderMessages = () => {
     if (!messages || messages.length === 0) {
-      if (isThinking && thinking && thinking.trim() !== '') {
+      // 只有在确实有thinking内容时才显示ThinkingBubble
+      if (thinking && thinking.trim() !== '') {
         return (
           <div key="thinking-bubble-empty" className="flex w-full justify-start">
             <div className="flex items-start max-w-[85%]">
@@ -93,7 +94,8 @@ const ChatMessages = ({
     const safeMessages = filterValidMessages(messages);
     const processedMessages = preprocessMessages(safeMessages);
     if (processedMessages.length === 0) {
-      if (isThinking && thinking && thinking.trim() !== '') {
+      // 只有在确实有thinking内容时才显示ThinkingBubble
+      if (thinking && thinking.trim() !== '') {
         return (
           <div key="thinking-bubble-empty" className="flex w-full justify-start">
             <div className="flex items-start max-w-[85%]">
@@ -105,26 +107,50 @@ const ChatMessages = ({
       return null;
     }
 
-    // 对消息进行分组和排序
-    const groupedMessages = processedMessages.reduce((acc, message) => {
-      const groupKey = message.groupId || message.id;
-      if (!acc[groupKey]) {
-        acc[groupKey] = [];
+    // 首先按照原始顺序和时间戳进行全局排序
+    const globalSortedMessages = processedMessages.sort((a, b) => {
+      // 优先按照 createdAt 排序
+      const timeA = new Date(a.createdAt).getTime();
+      const timeB = new Date(b.createdAt).getTime();
+      
+      if (timeA !== timeB) {
+        return timeA - timeB;
       }
-      acc[groupKey].push(message);
-      return acc;
-    }, {});
+      
+      // 如果时间相同，按照消息类型排序：user -> thinking -> tool_call -> content
+      const typeOrder = { 'user': 0, 'thinking': 1, 'tool_call': 2, 'tool_result': 2, 'content': 3 };
+      const orderA = typeOrder[a.type] || 999;
+      const orderB = typeOrder[b.type] || 999;
+      
+      if (orderA !== orderB) {
+        return orderA - orderB;
+      }
+      
+      // 最后按照 id 排序确保稳定性
+      return (a.id || '').localeCompare(b.id || '');
+    });
 
-    // 渲染消息组
-    return Object.entries(groupedMessages).map(([groupId, groupMessages]) => {
-      // 按时间戳排序组内消息
-      const sortedMessages = groupMessages.sort((a, b) => 
-        new Date(a.createdAt) - new Date(b.createdAt)
-      );
+    // 对消息进行分组，但保持全局排序
+    const groupedMessages = {};
+    const groupOrder = [];
+    
+    globalSortedMessages.forEach((message) => {
+      const groupKey = message.groupId || message.id;
+      if (!groupedMessages[groupKey]) {
+        groupedMessages[groupKey] = [];
+        groupOrder.push(groupKey);
+      }
+      groupedMessages[groupKey].push(message);
+    });
 
+    // 渲染消息组，按照 groupOrder 的顺序
+    return groupOrder.map((groupId) => {
+      const groupMessages = groupedMessages[groupId];
+      
+      // 组内消息保持已排序的顺序，不再重新排序
       return (
         <div key={groupId} className="message-group">
-          {sortedMessages.map((message, index) => {
+          {groupMessages.map((message, index) => {
             const isUser = message.role === 'user';
             const isAssistant = message.role === 'assistant';
 

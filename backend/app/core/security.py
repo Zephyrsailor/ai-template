@@ -2,22 +2,64 @@
 安全模块 - 处理身份验证、授权和安全相关功能
 """
 import secrets
+from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
 
+import jwt
 from fastapi import Depends, HTTPException, status
-from fastapi.security import APIKeyHeader, OAuth2PasswordBearer
+from fastapi.security import APIKeyHeader, HTTPBearer, OAuth2PasswordBearer
 
 from .config import get_settings
 
 # API密钥头部
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
-# OAuth2密码Bearer方案
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/token", auto_error=False)
+# JWT Bearer
+security = HTTPBearer(auto_error=False)
+
+# OAuth2 scheme for token authentication
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/auth/login", auto_error=False)
 
 def get_api_key() -> str:
     """生成安全的API密钥"""
     return secrets.token_urlsafe(32)
+
+def create_access_token(data: Dict[str, Any], expires_delta: Optional[timedelta] = None) -> str:
+    """创建JWT访问令牌"""
+    settings = get_settings()
+    to_encode = data.copy()
+    
+    if expires_delta:
+        expire = datetime.utcnow() + expires_delta
+    else:
+        expire = datetime.utcnow() + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+    return encoded_jwt
+
+def decode_token(token: str) -> Dict[str, Any]:
+    """解码JWT令牌"""
+    settings = get_settings()
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        return payload
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="令牌已过期",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    except jwt.JWTError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="令牌无效",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+def verify_token(token: str) -> Dict[str, Any]:
+    """验证JWT令牌（别名函数）"""
+    return decode_token(token)
 
 async def verify_api_key(api_key: Optional[str] = Depends(api_key_header)) -> Dict[str, Any]:
     """

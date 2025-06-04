@@ -205,7 +205,7 @@ const CollapsedIndicator = styled.div`
 const ThinkingContentWrapper = styled.div.attrs(props => ({
   className: props.className
 }))`
-  max-height: ${({ $collapsed }) => $collapsed ? '0' : '40vh'};
+  max-height: ${({ $collapsed }) => $collapsed ? '0' : '320px'};
   overflow: hidden;
   transition: max-height 0.3s ease-out;
   position: relative;
@@ -232,7 +232,7 @@ const ThinkingContent = styled.div`
   overflow-wrap: break-word;
   word-break: break-word;
   overflow-y: auto;
-  max-height: ${props => props.$isHistorical ? '35vh' : '35vh'};
+  max-height: 280px;
   
   &::-webkit-scrollbar {
     width: 5px;
@@ -278,7 +278,7 @@ const ThinkingContent = styled.div`
   @media (max-width: 768px) {
     padding: 12px;
     font-size: 13px;
-    max-height: ${props => props.$isHistorical ? '30vh' : '30vh'};
+    max-height: 240px;
   }
 `;
 

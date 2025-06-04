@@ -45,8 +45,8 @@ export async function fetchMCPServers(activeOnly = false) {
   try {
     // 添加user_id参数，确保只获取当前用户的数据
     const url = activeOnly 
-      ? `${API_BASE_URL}/mcp/servers/?active_only=true&user_specific=true`
-      : `${API_BASE_URL}/mcp/servers/?user_specific=true`;
+      ? `${API_BASE_URL}/mcp/servers?active_only=true&user_specific=true&connected_only=true`
+      : `${API_BASE_URL}/mcp/servers`;
       
     const response = await axios.get(url);
     return response.data;
@@ -202,7 +202,7 @@ export const uploadFileToKnowledgeBase = async (knowledgeBaseKey, file) => {
     const formData = new FormData();
     formData.append('file', file);
     const encodedKey = encodeURIComponent(knowledgeBaseKey);
-    const response = await axios.post(`${API_BASE_URL}/knowledge/${encodedKey}/upload/`, formData);
+    const response = await axios.post(`${API_BASE_URL}/knowledge/${encodedKey}/files/`, formData);
     const result = handleApiResponse(response.data);
 
     return result;
@@ -278,16 +278,23 @@ export const fetchConversations = async () => {
     const response = await axios.get(`${API_BASE_URL}/conversations/`);
         
     // 处理后端API返回格式，获取实际数据部分
-    if (response.data && response.data.data) {
-      // 标准格式是 { code: 200, message: "...", data: [...] }
-      return { success: true, data: response.data.data, message: response.data.message };
+    console.log("获取会话数据：", response.data);
+    
+    if (response.data && response.data.code === 200) {
+      // 新格式：{ code: 200, message: "...", data: [...] }
+      const conversationList = response.data.data || [];
+      return { 
+        success: true, 
+        data: conversationList, 
+        message: response.data.message 
+      };
     } else if (Array.isArray(response.data)) {
       // 如果直接返回数组
       return { success: true, data: response.data, message: "获取成功" };
-    } else {
-      console.warn('会话列表响应格式不正确:', response.data);
-      return { success: false, data: [], message: "获取会话列表失败：响应格式不正确" };
     }
+    
+    console.warn('会话列表响应格式不正确:', response.data);
+    return { success: false, data: [], message: "获取会话列表失败：响应格式不正确" };
   } catch (error) {
     console.error('获取会话历史出错:', error);
     // 根据实际错误处理返回，例如，如果401则可能是需要重新登录
@@ -353,7 +360,7 @@ export const deleteConversation = async (conversationId) => {
 export const createMCPServer = async (serverData) => {
   try {
     // 确保服务器与用户关联
-    const response = await axios.post(`${API_BASE_URL}/mcp/servers/?user_specific=true`, serverData);
+    const response = await axios.post(`${API_BASE_URL}/mcp/servers`, serverData);
     return response.data;
   } catch (error) {
     console.error('创建MCP服务器失败:', error);
@@ -388,6 +395,51 @@ export const testMCPServerConnection = async (serverId) => {
     return response.data;
   } catch (error) {
     console.error('测试MCP服务器连接失败:', error);
+    throw error;
+  }
+};
+
+/**
+ * 刷新/重连MCP服务器连接
+ * @param {string} serverId 服务器ID
+ * @returns {Promise<Object>} 刷新结果
+ */
+export const refreshMCPServerConnection = async (serverId) => {
+  try {
+    const response = await axios.post(`${API_BASE_URL}/mcp/servers/${serverId}/refresh?user_specific=true`);
+    return response.data;
+  } catch (error) {
+    console.error('刷新MCP服务器连接失败:', error);
+    throw error;
+  }
+};
+
+/**
+ * 连接到MCP服务器
+ * @param {string} serverId 服务器ID
+ * @returns {Promise<Object>} 连接结果
+ */
+export const connectMCPServer = async (serverId) => {
+  try {
+    const response = await axios.post(`${API_BASE_URL}/mcp/servers/${serverId}/connect?user_specific=true`);
+    return response.data;
+  } catch (error) {
+    console.error('连接MCP服务器失败:', error);
+    throw error;
+  }
+};
+
+/**
+ * 断开MCP服务器连接
+ * @param {string} serverId 服务器ID
+ * @returns {Promise<Object>} 断开连接结果
+ */
+export const disconnectMCPServer = async (serverId) => {
+  try {
+    const response = await axios.post(`${API_BASE_URL}/mcp/servers/${serverId}/disconnect?user_specific=true`);
+    return response.data;
+  } catch (error) {
+    console.error('断开MCP服务器连接失败:', error);
     throw error;
   }
 };
@@ -560,7 +612,13 @@ export const clearToolContext = async () => {
 
 // MCP 服务器状态管理
 export const fetchMCPServerStatuses = async (userSpecific = true) => {
-  return await axios.get(`/api/mcp/servers/statuses?user_specific=${userSpecific}`);
+  try {
+    const response = await axios.get(`${API_BASE_URL}/mcp/servers/statuses?user_specific=${userSpecific}`);
+    return response.data;
+  } catch (error) {
+    console.error('获取MCP服务器状态失败:', error);
+    throw error;
+  }
 };
 
 /**
@@ -569,11 +627,34 @@ export const fetchMCPServerStatuses = async (userSpecific = true) => {
  */
 export const fetchLLMProviders = async () => {
   try {
+    console.log('fetchLLMProviders: 开始请求...');
     const response = await axios.get(`${API_BASE_URL}/user/llm-config/providers`);
-    return response.data;
+    console.log('fetchLLMProviders: 原始响应:', response);
+    console.log('fetchLLMProviders: 响应数据:', response.data);
+    console.log('fetchLLMProviders: 响应状态:', response.status);
+    
+    // 处理不同的响应格式
+    if (response.data && response.data.data) {
+      // 标准格式 { code: 200, message: "...", data: [...] }
+      console.log('fetchLLMProviders: 使用标准格式，data字段:', response.data.data);
+      return Array.isArray(response.data.data) ? response.data.data : [];
+    } else if (Array.isArray(response.data)) {
+      // 直接返回数组
+      console.log('fetchLLMProviders: 直接返回数组格式');
+      return response.data;
+    } else {
+      console.warn('fetchLLMProviders 响应格式不正确:', response.data);
+      return [];
+    }
   } catch (error) {
     console.error('获取LLM提供商失败:', error);
-    throw error;
+    console.error('错误详情:', {
+      status: error.response?.status,
+      statusText: error.response?.statusText,
+      data: error.response?.data,
+      message: error.message
+    });
+    return []; // 返回空数组作为默认值
   }
 };
 
@@ -584,10 +665,22 @@ export const fetchLLMProviders = async () => {
 export const fetchUserLLMConfigs = async () => {
   try {
     const response = await axios.get(`${API_BASE_URL}/user/llm-config/`);
-    return response.data;
+    console.log('fetchUserLLMConfigs 原始响应:', response.data);
+    
+    // 处理不同的响应格式
+    if (response.data && response.data.data) {
+      // 标准格式 { code: 200, message: "...", data: [...] }
+      return Array.isArray(response.data.data) ? response.data.data : [];
+    } else if (Array.isArray(response.data)) {
+      // 直接返回数组
+      return response.data;
+    } else {
+      console.warn('fetchUserLLMConfigs 响应格式不正确:', response.data);
+      return [];
+    }
   } catch (error) {
     console.error('获取用户LLM配置失败:', error);
-    throw error;
+    return []; // 确保总是返回数组
   }
 };
 
@@ -606,28 +699,60 @@ export const fetchDefaultLLMConfig = async () => {
 };
 
 /**
- * 创建或更新LLM配置
+ * 创建LLM配置
  * @param {Object} configData 配置数据
  * @returns {Promise<Object>} 创建结果
  */
-export const saveLLMConfig = async (configData) => {
+export const createLLMConfig = async (configData) => {
   try {
     const response = await axios.post(`${API_BASE_URL}/user/llm-config/`, configData);
     return response.data;
   } catch (error) {
-    console.error('保存LLM配置失败:', error);
+    console.error('创建LLM配置失败:', error);
     throw error;
   }
 };
 
 /**
+ * 更新LLM配置
+ * @param {string} configId 配置ID
+ * @param {Object} configData 配置数据
+ * @returns {Promise<Object>} 更新结果
+ */
+export const updateLLMConfig = async (configId, configData) => {
+  try {
+    const response = await axios.put(`${API_BASE_URL}/user/llm-config/${configId}`, configData);
+    return response.data;
+  } catch (error) {
+    console.error('更新LLM配置失败:', error);
+    throw error;
+  }
+};
+
+/**
+ * 创建或更新LLM配置（兼容性函数）
+ * @param {Object} configData 配置数据
+ * @param {string} configId 配置ID（可选，如果提供则为更新操作）
+ * @returns {Promise<Object>} 操作结果
+ */
+export const saveLLMConfig = async (configData, configId = null) => {
+  if (configId) {
+    // 更新操作
+    return await updateLLMConfig(configId, configData);
+  } else {
+    // 创建操作
+    return await createLLMConfig(configData);
+  }
+};
+
+/**
  * 删除LLM配置
- * @param {string} configName 配置名称
+ * @param {string} configName 配置ID
  * @returns {Promise<Object>} 删除结果
  */
-export const deleteLLMConfig = async (configName) => {
+export const deleteLLMConfig = async (id) => {
   try {
-    const response = await axios.delete(`${API_BASE_URL}/user/llm-config/${encodeURIComponent(configName)}`);
+    const response = await axios.delete(`${API_BASE_URL}/user/llm-config/${id}`);
     return response.data;
   } catch (error) {
     console.error('删除LLM配置失败:', error);
@@ -657,9 +782,35 @@ export const fetchOllamaModels = async (baseUrl = 'http://localhost:11434') => {
 export const fetchAvailableModelsForUser = async () => {
   try {
     const response = await axios.get(`${API_BASE_URL}/user/llm-config/models/available`);
-    return response.data;
+    console.log('fetchAvailableModelsForUser 原始响应:', response.data);
+    
+    // 处理不同的响应格式
+    if (response.data && response.data.data) {
+      // 标准格式 { code: 200, message: "...", data: [...] }
+      return Array.isArray(response.data.data) ? response.data.data : [];
+    } else if (Array.isArray(response.data)) {
+      // 直接返回数组
+      return response.data;
+    } else {
+      console.warn('fetchAvailableModelsForUser 响应格式不正确:', response.data);
+      return [];
+    }
   } catch (error) {
     console.error('获取用户可用模型列表失败:', error);
+    return []; // 确保总是返回数组
+  }
+};
+
+// 在其他API函数之后添加
+export const fetchModelLimits = async (modelName) => {
+  try {
+    const response = await axios.get(`/api/user/llm-config/model-limits/${encodeURIComponent(modelName)}`);
+    if (response.data.code === 200) {
+      return response.data.data;
+    }
+    throw new Error(response.data.message || '获取模型参数失败');
+  } catch (error) {
+    console.error('获取模型参数失败:', error);
     throw error;
   }
 }; 

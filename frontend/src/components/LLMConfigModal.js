@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { FiX, FiPlus, FiTrash2, FiEdit3 } from 'react-icons/fi';
+import { FiX, FiPlus, FiTrash2, FiEdit3, FiInfo } from 'react-icons/fi';
 import styled from 'styled-components';
 import ConfirmDialog from './ConfirmDialog';
-import { fetchLLMProviders, fetchUserLLMConfigs, saveLLMConfig, deleteLLMConfig, fetchOllamaModels } from '../api';
+import { fetchLLMProviders, fetchUserLLMConfigs, saveLLMConfig, deleteLLMConfig, fetchOllamaModels, fetchModelLimits } from '../api';
 
 const ModalOverlay = styled.div`
   position: fixed;
@@ -209,13 +209,16 @@ const LLMConfigModal = ({ isOpen, onClose, onConfigChange, selectedModel, setSel
   const [loadingOllamaModels, setLoadingOllamaModels] = useState(false);
   const [customModelName, setCustomModelName] = useState('');
   const [showCustomModel, setShowCustomModel] = useState(false);
+  const [recommendedParams, setRecommendedParams] = useState(null);
+  const [isLoadingRecommendation, setIsLoadingRecommendation] = useState(false);
   const [formData, setFormData] = useState({
     provider: 'openai',
     model_name: '',
     api_key: '',
     base_url: '',
     temperature: 0.7,
-    max_tokens: 1024,
+    max_tokens: 4096,
+    context_length: 32768,
     is_default: false,
     config_name: ''
   });
@@ -233,6 +236,15 @@ const LLMConfigModal = ({ isOpen, onClose, onConfigChange, selectedModel, setSel
       loadOllamaModels(formData.base_url);
     }
   }, [formData.provider, formData.base_url]);
+
+  // 当模型名称改变时，获取推荐参数
+  useEffect(() => {
+    if (formData.model_name) {
+      getModelRecommendation(formData.model_name);
+    } else {
+      setRecommendedParams(null);
+    }
+  }, [formData.model_name]);
 
   const loadProviders = async () => {
     try {
@@ -281,7 +293,15 @@ const LLMConfigModal = ({ isOpen, onClose, onConfigChange, selectedModel, setSel
         delete submitData.api_key;
       }
 
-      await saveLLMConfig(submitData);
+      // 根据是否有editingConfig来决定是创建还是更新
+      if (editingConfig) {
+        // 更新操作 - 传递配置ID
+        await saveLLMConfig(submitData, editingConfig.id);
+      } else {
+        // 创建操作
+        await saveLLMConfig(submitData);
+      }
+      
       await loadConfigs();
       setShowForm(false);
       setEditingConfig(null);
@@ -291,7 +311,8 @@ const LLMConfigModal = ({ isOpen, onClose, onConfigChange, selectedModel, setSel
         api_key: '',
         base_url: '',
         temperature: 0.7,
-        max_tokens: 1024,
+        max_tokens: 4096,
+        context_length: 32768,
         is_default: false,
         config_name: ''
       });
@@ -304,11 +325,13 @@ const LLMConfigModal = ({ isOpen, onClose, onConfigChange, selectedModel, setSel
       onConfigChange?.();
     } catch (error) {
       console.error('保存配置失败:', error);
+      // 显示错误信息给用户
+      alert(editingConfig ? '更新配置失败，请重试' : '创建配置失败，请重试');
     }
   };
 
-  const handleDelete = (configName) => {
-    setConfigToDelete(configName);
+  const handleDelete = (config) => {
+    setConfigToDelete(config);
     setShowConfirmDialog(true);
   };
 
@@ -319,11 +342,13 @@ const LLMConfigModal = ({ isOpen, onClose, onConfigChange, selectedModel, setSel
       const token = localStorage.getItem('authToken');
       if (!token) return;
 
-      await deleteLLMConfig(configToDelete);
+      // 使用配置ID进行删除
+      await deleteLLMConfig(configToDelete.id);
       await loadConfigs();
       onConfigChange?.();
     } catch (error) {
       console.error('删除配置失败:', error);
+      alert('删除配置失败，请重试');
     } finally {
       setShowConfirmDialog(false);
       setConfigToDelete(null);
@@ -335,17 +360,66 @@ const LLMConfigModal = ({ isOpen, onClose, onConfigChange, selectedModel, setSel
     setFormData({
       provider: config.provider,
       model_name: config.model_name,
-      api_key: '', // 不显示现有密钥
+      api_key: '', // 不显示现有密钥，但保留原有逻辑
       base_url: config.base_url || '',
       temperature: config.temperature,
       max_tokens: config.max_tokens,
+      context_length: config.context_length,
       is_default: config.is_default,
       config_name: config.config_name
     });
     setShowForm(true);
   };
 
+  const handleCancelEdit = () => {
+    setShowForm(false);
+    setEditingConfig(null);
+    setFormData({
+      provider: 'openai',
+      model_name: '',
+      api_key: '',
+      base_url: '',
+      temperature: 0.7,
+      max_tokens: 4096,
+      context_length: 32768,
+      is_default: false,
+      config_name: ''
+    });
+    setShowCustomModel(false);
+    setCustomModelName('');
+  };
+
   const selectedProvider = providers.find(p => p.value === formData.provider);
+
+  // 获取模型推荐参数
+  const getModelRecommendation = async (modelName) => {
+    if (!modelName) {
+      setRecommendedParams(null);
+      return;
+    }
+    
+    setIsLoadingRecommendation(true);
+    try {
+      const params = await fetchModelLimits(modelName);
+      setRecommendedParams(params);
+    } catch (error) {
+      console.error('获取模型推荐参数失败:', error);
+      setRecommendedParams(null);
+    } finally {
+      setIsLoadingRecommendation(false);
+    }
+  };
+
+  // 应用推荐参数
+  const applyRecommendedParams = () => {
+    if (recommendedParams) {
+      setFormData(prev => ({
+        ...prev,
+        max_tokens: recommendedParams.max_tokens,
+        context_length: recommendedParams.context_length
+      }));
+    }
+  };
 
   if (!isOpen) return null;
 
@@ -376,7 +450,7 @@ const LLMConfigModal = ({ isOpen, onClose, onConfigChange, selectedModel, setSel
                       <ActionButton onClick={() => handleEdit(config)}>
                         <FiEdit3 size={12} />
                       </ActionButton>
-                      <ActionButton onClick={() => handleDelete(config.config_name)}>
+                      <ActionButton onClick={() => handleDelete(config)}>
                         <FiTrash2 size={12} />
                       </ActionButton>
                     </ConfigActions>
@@ -392,7 +466,6 @@ const LLMConfigModal = ({ isOpen, onClose, onConfigChange, selectedModel, setSel
 
           {!showForm && (
             <Button variant="primary" onClick={() => setShowForm(true)}>
-              <FiPlus size={16} style={{ marginRight: '6px' }} />
               添加新配置
             </Button>
           )}
@@ -554,13 +627,105 @@ const LLMConfigModal = ({ isOpen, onClose, onConfigChange, selectedModel, setSel
                 </Label>
               </FormGroup>
 
+              {/* 模型参数推荐 */}
+              {formData.model_name && (
+                <FormGroup>
+                  <div style={{ 
+                    background: '#f8fafc', 
+                    border: '1px solid #e2e8f0', 
+                    borderRadius: '6px', 
+                    padding: '12px',
+                    marginBottom: '16px'
+                  }}>
+                    <div style={{ 
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      justifyContent: 'space-between',
+                      marginBottom: '8px'
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <FiInfo size={16} color="#3b82f6" />
+                        <span style={{ fontSize: '14px', fontWeight: '500', color: '#374151' }}>
+                          模型参数推荐
+                        </span>
+                      </div>
+                      {isLoadingRecommendation && (
+                        <span style={{ fontSize: '12px', color: '#6b7280' }}>获取中...</span>
+                      )}
+                    </div>
+                    {recommendedParams ? (
+                      <div>
+                        <div style={{ fontSize: '13px', color: '#6b7280', marginBottom: '8px' }}>
+                          推荐参数：上下文窗口 {recommendedParams.context_length.toLocaleString()} tokens，
+                          最大生成 {recommendedParams.max_tokens.toLocaleString()} tokens
+                        </div>
+                        <Button 
+                          type="button" 
+                          onClick={applyRecommendedParams}
+                          style={{ 
+                            fontSize: '12px', 
+                            padding: '4px 8px',
+                            backgroundColor: '#3b82f6',
+                            color: 'white',
+                            border: 'none'
+                          }}
+                        >
+                          应用推荐参数
+                        </Button>
+                      </div>
+                    ) : !isLoadingRecommendation && (
+                      <div style={{ fontSize: '13px', color: '#9ca3af' }}>
+                        暂无此模型的推荐参数
+                      </div>
+                    )}
+                  </div>
+                </FormGroup>
+              )}
+
+              <FormGroup>
+                <Label>温度</Label>
+                <Input
+                  type="number"
+                  name="temperature"
+                  value={formData.temperature}
+                  onChange={e => setFormData({...formData, temperature: e.target.value})}
+                  min="0"
+                  max="2"
+                  step="0.1"
+                />
+              </FormGroup>
+
+              <FormGroup>
+                <Label>最大生成Token</Label>
+                <Input
+                  type="number"
+                  name="max_tokens"
+                  value={formData.max_tokens}
+                  onChange={e => setFormData({...formData, max_tokens: e.target.value})}
+                  min="1"
+                  max="32000"
+                  placeholder="单次生成的最大token数"
+                />
+              </FormGroup>
+
+              <FormGroup>
+                <Label>上下文窗口大小</Label>
+                <Input
+                  type="number"
+                  name="context_length"
+                  value={formData.context_length}
+                  onChange={e => setFormData({...formData, context_length: e.target.value})}
+                  min="1024"
+                  max="1000000"
+                  placeholder="模型的总上下文窗口大小"
+                />
+                <div style={{fontSize: '12px', color: '#666', marginTop: '4px'}}>
+                  上下文窗口大小决定了模型能记住多少历史对话内容
+                </div>
+              </FormGroup>
+
               <ButtonGroup>
-                <Button type="button" onClick={() => {
-                  setShowForm(false);
-                  setEditingConfig(null);
-                  setShowCustomModel(false);
-                  setCustomModelName('');
-                }}>
+                <Button type="button" onClick={handleCancelEdit}>
                   取消
                 </Button>
                 <Button type="submit" variant="primary">
@@ -577,7 +742,7 @@ const LLMConfigModal = ({ isOpen, onClose, onConfigChange, selectedModel, setSel
         onClose={() => setShowConfirmDialog(false)}
         onConfirm={confirmDelete}
         title="删除LLM配置"
-        message={`确定要删除配置"${configToDelete}"吗？此操作无法撤销。`}
+        message={`确定要删除配置"${configToDelete?.config_name}"吗？此操作无法撤销。`}
         confirmText="删除"
         cancelText="取消"
         type="danger"

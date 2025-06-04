@@ -8,156 +8,177 @@ from pydantic import BaseModel
 
 from ...domain.schemas.conversation import (
     ConversationCreate, ConversationUpdate, ConversationResponse,
-    ConversationListResponse, MessageCreate, MessageResponse
+    ConversationDetailResponse, ConversationListResponse, MessageCreate, MessageResponse,
+    MessageListResponse
 )
 from ...domain.schemas.base import ApiResponse
 from ...services.conversation import ConversationService
 from ...domain.models.user import User
-from ..deps import get_current_user, api_response
+from ...core.messages import get_message, MessageKeys
+from ..deps import get_current_user, get_conversation_service
+from ...core.logging import get_logger
+
+logger = get_logger(__name__)
 
 router = APIRouter(prefix="/api/conversations", tags=["conversations"])
 
-# 具体响应模型
-class ConversationListResponseWrapper(ApiResponse[List[ConversationListResponse]]):
-    """会话列表响应"""
-    pass
+@router.get("/", response_model=ApiResponse[List[ConversationResponse]])
+async def list_conversations(
+    page: int = 1,
+    page_size: int = 50,
+    current_user: User = Depends(get_current_user),
+    conversation_service: ConversationService = Depends(get_conversation_service)
+):
+    """
+    获取用户的会话列表
+    
+    Args:
+        page: 页码，默认为1
+        page_size: 每页大小，默认为50
+    """
+    try:
+        # 计算偏移量
+        offset = (page - 1) * page_size
+        
+        # 服务层现在返回包含分页信息的字典
+        conversation_data = await conversation_service.list_conversations(
+            current_user.id, 
+            limit=page_size, 
+            offset=offset
+        )
+        
+        # 返回标准格式，data字段直接是会话数组
+        return ApiResponse(
+            success=True,
+            code=200,
+            message=get_message(MessageKeys.SUCCESS),
+            data=conversation_data.get('conversations', [])
+        )
+    except Exception as e:
+        logger.error(f"获取会话列表失败: {str(e)}", exc_info=True)
+        return ApiResponse(
+            success=False,
+            code=500,
+            message=get_message(MessageKeys.INTERNAL_ERROR),
+            data=[]
+        )
 
-class ConversationResponseWrapper(ApiResponse[ConversationResponse]):
-    """会话详情响应"""
-    pass
-
-class MessageResponseWrapper(ApiResponse[MessageResponse]):
-    """消息响应"""
-    pass
-
-def get_conversation_service() -> ConversationService:
-    """获取会话服务"""
-    return ConversationService()
-
-@router.post("/", response_model=ConversationResponseWrapper)
+@router.post("/", response_model=ApiResponse[ConversationResponse])
 async def create_conversation(
-    data: ConversationCreate,
+    conversation_create: ConversationCreate,
     current_user: User = Depends(get_current_user),
     conversation_service: ConversationService = Depends(get_conversation_service)
 ):
     """
     创建新会话
     """
-    conversation = conversation_service.create_conversation(
-        user_id=current_user.id,
-        title=data.title
-    )
-    
-    if data.system_prompt:
-        conversation.system_prompt = data.system_prompt
-        
-    if data.model_id:
-        conversation.model_id = data.model_id
-        
-    if data.metadata:
-        conversation.metadata = data.metadata
-    
-    conversation_service.update_conversation(conversation)
-    
-    # 转换为响应格式
-    response = _conversation_to_response(conversation)
-    
-    return api_response(data=response)
+    try:
+        conversation = await conversation_service.create_conversation(
+            user_id=current_user.id,
+            title=conversation_create.title
+        )
+        return ApiResponse(
+            success=True,
+            code=200,
+            message=get_message(MessageKeys.CONVERSATION_CREATED),
+            data=conversation
+        )
+    except Exception as e:
+        logger.error(f"创建会话失败: {str(e)}", exc_info=True)
+        return ApiResponse(
+            success=False,
+            code=500,
+            message=get_message(MessageKeys.INTERNAL_ERROR)
+        )
 
-@router.get("/", response_model=ConversationListResponseWrapper)
-async def list_conversations(
-    current_user: User = Depends(get_current_user),
-    conversation_service: ConversationService = Depends(get_conversation_service)
-):
-    """
-    获取用户所有会话列表
-    """
-    conversations = conversation_service.list_conversations(current_user.id)
-    
-    # 转换为响应格式
-    response = []
-    for conv in conversations:
-        last_message = None
-        if conv.messages:
-            msg = conv.messages[-1]
-            last_message = MessageResponse(
-                id=msg.id,
-                role=msg.role,
-                content=msg.content,
-                timestamp=msg.timestamp,
-                metadata=msg.metadata,
-                thinking=msg.thinking,
-                tool_calls=msg.tool_calls or []
-            )
-            
-        response.append(ConversationListResponse(
-            id=conv.id,
-            title=conv.title,
-            created_at=conv.created_at,
-            updated_at=conv.updated_at,
-            message_count=len(conv.messages),
-            is_pinned=conv.is_pinned,
-            last_message=last_message,
-            model_id=conv.model_id
-        ))
-    
-    return api_response(data=response)
-
-@router.get("/{conversation_id}", response_model=ConversationResponseWrapper)
+@router.get("/{conversation_id}", response_model=ApiResponse[ConversationDetailResponse])
 async def get_conversation(
     conversation_id: str,
     current_user: User = Depends(get_current_user),
     conversation_service: ConversationService = Depends(get_conversation_service)
 ):
     """
-    获取会话详情
+    获取特定会话详情（包含消息）
     """
-    conversation = conversation_service.get_conversation(current_user.id, conversation_id)
-    if not conversation:
-        return api_response(code=404, message=f"会话 {conversation_id} 不存在")
-    
-    # 转换为响应格式
-    response = _conversation_to_response(conversation)
-    
-    return api_response(data=response)
+    try:
+        conversation = await conversation_service.get_conversation(current_user.id, conversation_id)
+        if not conversation:
+            return ApiResponse(
+                success=False,
+                code=404,
+                message=get_message(MessageKeys.CONVERSATION_NOT_FOUND, conversation_id=conversation_id),
+                data=None
+            )
+        
+        # 获取消息列表
+        messages = await conversation_service.get_conversation_messages(current_user.id, conversation_id)
+        
+        # 构造响应数据
+        response_data = {
+            "id": conversation.id,
+            "title": conversation.title,
+            "created_at": conversation.created_at,
+            "updated_at": conversation.updated_at,
+            "message_count": conversation.message_count,
+            "is_pinned": conversation.is_pinned,
+            "model_id": conversation.model_id,
+            "system_prompt": conversation.system_prompt,
+            "metadata": conversation.metadata,
+            "messages": messages
+        }
+        
+        return ApiResponse(
+            success=True,
+            code=200,
+            message=get_message(MessageKeys.SUCCESS),
+            data=response_data
+        )
+    except Exception as e:
+        logger.error(f"获取会话详情失败 {conversation_id}: {str(e)}", exc_info=True)
+        return ApiResponse(
+            success=False,
+            code=500,
+            message=get_message(MessageKeys.INTERNAL_ERROR),
+            data=None
+        )
 
-@router.put("/{conversation_id}", response_model=ConversationResponseWrapper)
+@router.put("/{conversation_id}", response_model=ApiResponse[ConversationResponse])
 async def update_conversation(
     conversation_id: str,
-    data: ConversationUpdate,
+    conversation_update: ConversationUpdate,
     current_user: User = Depends(get_current_user),
     conversation_service: ConversationService = Depends(get_conversation_service)
 ):
     """
     更新会话信息
     """
-    conversation = conversation_service.get_conversation(current_user.id, conversation_id)
-    if not conversation:
-        return api_response(code=404, message=f"会话 {conversation_id} 不存在")
-    
-    # 更新字段
-    if data.title is not None:
-        conversation.title = data.title
+    try:
+        conversation = await conversation_service.update_conversation(
+            user_id=current_user.id,
+            conversation_id=conversation_id,
+            title=conversation_update.title
+        )
         
-    if data.system_prompt is not None:
-        conversation.system_prompt = data.system_prompt
+        if not conversation:
+            return ApiResponse(
+                success=False,
+                code=404,
+                message=get_message(MessageKeys.CONVERSATION_NOT_FOUND, conversation_id=conversation_id)
+            )
         
-    if data.model_id is not None:
-        conversation.model_id = data.model_id
-        
-    if data.is_pinned is not None:
-        conversation.is_pinned = data.is_pinned
-        
-    if data.metadata is not None:
-        conversation.metadata = data.metadata or {}
-    
-    # 保存更新
-    conversation_service.update_conversation(conversation)
-    
-    # 转换为响应格式
-    response = _conversation_to_response(conversation)
-    
-    return api_response(data=response)
+        return ApiResponse(
+            success=True,
+            code=200,
+            message=get_message(MessageKeys.CONVERSATION_UPDATED),
+            data=conversation
+        )
+    except Exception as e:
+        logger.error(f"更新会话失败 {conversation_id}: {str(e)}", exc_info=True)
+        return ApiResponse(
+            success=False,
+            code=500,
+            message=get_message(MessageKeys.INTERNAL_ERROR)
+        )
 
 @router.delete("/{conversation_id}", response_model=ApiResponse)
 async def delete_conversation(
@@ -168,115 +189,102 @@ async def delete_conversation(
     """
     删除会话
     """
-    success = conversation_service.delete_conversation(current_user.id, conversation_id)
-    if not success:
-        return api_response(code=404, message=f"会话 {conversation_id} 不存在")
-    
-    return api_response(message=f"会话 {conversation_id} 已删除")
+    try:
+        success = await conversation_service.delete_conversation(current_user.id, conversation_id)
+        if not success:
+            return ApiResponse(
+                success=False,
+                code=404,
+                message=get_message(MessageKeys.CONVERSATION_NOT_FOUND, conversation_id=conversation_id)
+            )
+        
+        return ApiResponse(
+            success=True,
+            code=200,
+            message=get_message(MessageKeys.CONVERSATION_DELETED, conversation_id=conversation_id)
+        )
+    except Exception as e:
+        logger.error(f"删除会话失败 {conversation_id}: {str(e)}", exc_info=True)
+        return ApiResponse(
+            success=False,
+            code=500,
+            message=get_message(MessageKeys.INTERNAL_ERROR)
+        )
 
-@router.post("/{conversation_id}/messages", response_model=MessageResponseWrapper)
+@router.get("/{conversation_id}/messages", response_model=ApiResponse[List[Dict[str, Any]]])
+async def get_conversation_messages(
+    conversation_id: str,
+    current_user: User = Depends(get_current_user),
+    conversation_service: ConversationService = Depends(get_conversation_service)
+):
+    """
+    获取会话的消息列表
+    """
+    try:
+        # 首先验证会话是否存在且属于当前用户
+        conversation = await conversation_service.get_conversation(current_user.id, conversation_id)
+        if not conversation:
+            return ApiResponse(
+                success=False,
+                code=404,
+                message=get_message(MessageKeys.CONVERSATION_NOT_FOUND, conversation_id=conversation_id)
+            )
+        
+        messages = await conversation_service.get_conversation_messages(current_user.id, conversation_id)
+        return ApiResponse(
+            success=True,
+            code=200,
+            message=get_message(MessageKeys.SUCCESS),
+            data=messages
+        )
+    except Exception as e:
+        logger.error(f"获取会话消息失败 {conversation_id}: {str(e)}", exc_info=True)
+        return ApiResponse(
+            success=False,
+            code=500,
+            message=get_message(MessageKeys.INTERNAL_ERROR)
+        )
+
+@router.post("/{conversation_id}/messages", response_model=ApiResponse[MessageResponse])
 async def add_message(
     conversation_id: str,
-    data: MessageCreate,
+    message_create: MessageCreate,
     current_user: User = Depends(get_current_user),
     conversation_service: ConversationService = Depends(get_conversation_service)
 ):
     """
     向会话添加消息
     """
-    message = conversation_service.add_message(
-        user_id=current_user.id,
-        conversation_id=conversation_id,
-        role=data.role,
-        content=data.content,
-        metadata=data.metadata,
-        thinking=data.thinking,
-        tool_calls=data.tool_calls
-    )
-    
-    if not message:
-        return api_response(code=404, message=f"会话 {conversation_id} 不存在")
-    
-    # 转换为响应格式
-    response = MessageResponse(
-        id=message.id,
-        role=message.role,
-        content=message.content,
-        timestamp=message.timestamp,
-        metadata=message.metadata,
-        thinking=message.thinking,
-        tool_calls=message.tool_calls or []
-    )
-    
-    return api_response(data=response)
-
-@router.delete("/{conversation_id}/messages", response_model=ApiResponse)
-async def clear_messages(
-    conversation_id: str,
-    current_user: User = Depends(get_current_user),
-    conversation_service: ConversationService = Depends(get_conversation_service)
-):
-    """
-    清空会话消息
-    """
-    success = conversation_service.clear_messages(current_user.id, conversation_id)
-    if not success:
-        return api_response(code=404, message=f"会话 {conversation_id} 不存在")
-    
-    return api_response(message=f"会话 {conversation_id} 的消息已清空")
-
-@router.post("/{conversation_id}/pin", response_model=ApiResponse)
-async def pin_conversation(
-    conversation_id: str,
-    current_user: User = Depends(get_current_user),
-    conversation_service: ConversationService = Depends(get_conversation_service)
-):
-    """
-    置顶会话
-    """
-    success = conversation_service.pin_conversation(current_user.id, conversation_id, True)
-    if not success:
-        return api_response(code=404, message=f"会话 {conversation_id} 不存在")
-    
-    return api_response(message=f"会话 {conversation_id} 已置顶")
-
-@router.post("/{conversation_id}/unpin", response_model=ApiResponse)
-async def unpin_conversation(
-    conversation_id: str,
-    current_user: User = Depends(get_current_user),
-    conversation_service: ConversationService = Depends(get_conversation_service)
-):
-    """
-    取消置顶会话
-    """
-    success = conversation_service.pin_conversation(current_user.id, conversation_id, False)
-    if not success:
-        return api_response(code=404, message=f"会话 {conversation_id} 不存在")
-    
-    return api_response(message=f"会话 {conversation_id} 已取消置顶")
-
-def _conversation_to_response(conversation) -> ConversationResponse:
-    """将会话对象转换为响应格式"""
-    messages = []
-    for msg in conversation.messages:
-        messages.append(MessageResponse(
-            id=msg.id,
-            role=msg.role,
-            content=msg.content,
-            timestamp=msg.timestamp,
-            metadata=msg.metadata,
-            thinking=msg.thinking,
-            tool_calls=msg.tool_calls or []
-        ))
-    
-    return ConversationResponse(
-        id=conversation.id,
-        title=conversation.title,
-        messages=messages,
-        created_at=conversation.created_at,
-        updated_at=conversation.updated_at,
-        model_id=conversation.model_id,
-        system_prompt=conversation.system_prompt,
-        is_pinned=conversation.is_pinned,
-        metadata=conversation.metadata
-    ) 
+    try:
+        # 首先验证会话是否存在且属于当前用户
+        conversation = await conversation_service.get_conversation(current_user.id, conversation_id)
+        if not conversation:
+            return ApiResponse(
+                success=False,
+                code=404,
+                message=get_message(MessageKeys.CONVERSATION_NOT_FOUND, conversation_id=conversation_id)
+            )
+        
+        message = await conversation_service.add_message(
+            user_id=current_user.id,
+            conversation_id=conversation_id,
+            role=message_create.role,
+            content=message_create.content,
+            metadata=message_create.metadata,
+            thinking=message_create.thinking,
+            tool_calls=message_create.tool_calls
+        )
+        
+        return ApiResponse(
+            success=True,
+            code=200,
+            message=get_message(MessageKeys.SUCCESS),
+            data=message
+        )
+    except Exception as e:
+        logger.error(f"添加消息失败 {conversation_id}: {str(e)}", exc_info=True)
+        return ApiResponse(
+            success=False,
+            code=500,
+            message=get_message(MessageKeys.INTERNAL_ERROR)
+        ) 

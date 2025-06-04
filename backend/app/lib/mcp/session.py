@@ -3,7 +3,6 @@
 import asyncio
 from datetime import timedelta, datetime
 from typing import Any, Dict, List, Optional, TypeVar
-from contextlib import AsyncExitStack
 
 from anyio import Lock
 from mcp import ClientSession
@@ -38,6 +37,9 @@ class ServerSession:
         self.consecutive_failures = 0
         self.last_failure_time: Optional[datetime] = None
         self.total_failures = 0
+        # 保存连接上下文管理器的引用，用于清理
+        self.connection_context = None
+        self.session_context = None
     
     def mark_unhealthy(self, error: Exception) -> None:
         """标记会话为不健康状态。"""
@@ -65,6 +67,48 @@ class ServerSession:
                 return False
         
         return True
+    
+    async def cleanup(self) -> None:
+        """清理会话和连接资源"""
+        try:
+            # 先关闭会话上下文
+            if self.session_context:
+                try:
+                    await asyncio.wait_for(
+                        self.session_context.__aexit__(None, None, None),
+                        timeout=2.0  # 2秒超时
+                    )
+                except asyncio.TimeoutError:
+                    # 超时则强制清理
+                    pass
+                except Exception:
+                    # 忽略其他清理错误
+                    pass
+                finally:
+                    self.session_context = None
+        except Exception:
+            # 忽略清理时的错误，避免阻塞
+            pass
+        
+        try:
+            # 再关闭连接上下文
+            if self.connection_context:
+                try:
+                    await asyncio.wait_for(
+                        self.connection_context.__aexit__(None, None, None),
+                        timeout=2.0  # 2秒超时
+                    )
+                except asyncio.TimeoutError:
+                    # 超时则强制清理
+                    pass
+                except Exception:
+                    # 忽略其他清理错误
+                    pass
+                finally:
+                    self.connection_context = None
+        except Exception:
+            # 忽略清理时的错误，避免阻塞
+            pass
 
 
 class SessionManager:
@@ -98,7 +142,6 @@ class SessionManager:
         self.sessions: Dict[str, ServerSession] = {}
         self.session_lock = Lock()
         self.initialized = False
-        self.exit_stack = AsyncExitStack()      
     
     async def __aenter__(self):
         """异步上下文管理器入口。"""
@@ -157,42 +200,43 @@ class SessionManager:
             raise ValueError(f"未找到服务器'{server_name}'的配置")
         
         self.logger.info(f"正在创建服务器'{server_name}'的会话")
+        
+        connection_context = None
+        session_context = None
+        
         try:
             # 1. 获取连接的异步上下文管理器
-            connection_cm = await self.connection_manager.create_connection(server_name)
+            connection_context = await self.connection_manager.create_connection(server_name)
+            read_stream, write_stream = await connection_context.__aenter__()
+            self.logger.info(f"服务器'{server_name}'的连接已建立")
 
-            # 2. 使用 SessionManager 的 exit_stack 进入连接上下文
-            read_stream, write_stream = await self.exit_stack.enter_async_context(connection_cm)
-            self.logger.info(f"服务器'{server_name}'的连接上下文已进入")
-
-            # Yield control to the event loop to allow stdio_client's internal tasks to progress.
-            # A small delay can help ensure the subprocess is fully ready.
+            # 让出控制权，确保子进程完全准备好
             await asyncio.sleep(0.1)
 
-            # 3. 计算超时
+            # 2. 计算超时
             timeout = None
             if "read_timeout_seconds" in config:
                 timeout = timedelta(seconds=config["read_timeout_seconds"])
 
-            # 4. 创建 ClientSession 实例并将其作为异步上下文添加到 exit_stack
-            #    This assumes ClientSession is an async context manager.
-            self.logger.info(f"准备进入服务器'{server_name}'的 ClientSession 上下文")
-            client_session_context = ClientSession(read_stream, write_stream, read_timeout_seconds=timeout)
-            session = await self.exit_stack.enter_async_context(client_session_context)
-            self.logger.info(f"服务器'{server_name}'的 ClientSession 上下文已进入")
-
-            # The sleep previously here did not resolve the hang, removing it.
+            # 3. 创建 ClientSession 上下文
+            self.logger.info(f"准备创建服务器'{server_name}'的 ClientSession")
+            session_context = ClientSession(read_stream, write_stream, read_timeout_seconds=timeout)
+            session = await session_context.__aenter__()
+            self.logger.info(f"服务器'{server_name}'的 ClientSession 已创建")
             
-            # 5. 初始化会话实例 (returned by __aenter__ of ClientSession)
-            self.logger.info(f"正在初始化服务器'{server_name}'的 ClientSession 实例 (调用 .initialize())")
+            # 4. 初始化会话
+            self.logger.info(f"正在初始化服务器'{server_name}'的会话")
             init_result = await session.initialize()
             
-            # 保存会话和能力
+            # 5. 保存会话和能力
             server_session = ServerSession(
                 server_name=server_name,
                 session=session,
                 capabilities=init_result.capabilities
             )
+            # 保存上下文引用用于清理
+            server_session.connection_context = connection_context
+            server_session.session_context = session_context
             
             self.sessions[server_name] = server_session
             
@@ -202,6 +246,19 @@ class SessionManager:
             
         except Exception as e:
             self.logger.error(f"创建服务器'{server_name}'的会话失败: {e}")
+            
+            # 清理已创建的上下文
+            try:
+                if session_context:
+                    await session_context.__aexit__(type(e), e, e.__traceback__)
+            except Exception:
+                pass
+            
+            try:
+                if connection_context:
+                    await connection_context.__aexit__(type(e), e, e.__traceback__)
+            except Exception:
+                pass
             
             # 如果存在旧会话，标记为不健康
             if server_name in self.sessions:
@@ -319,31 +376,37 @@ class SessionManager:
     
     async def close_session(self, server_name: str) -> None:
         """关闭指定服务器的会话。"""
-        # 连接管理器会负责底层连接的关闭
-        await self.connection_manager.close_connection(server_name)
-        
-        # 从会话映射中移除
         if server_name in self.sessions:
+            session_info = self.sessions[server_name]
+            await session_info.cleanup()
             del self.sessions[server_name]
+            self.logger.info(f"已关闭服务器'{server_name}'的会话")
             
     async def close_all(self) -> None:
         """关闭所有会话和管理的上下文。"""
-        self.logger.info("正在关闭所有会话和管理的上下文")
+        self.logger.info("正在关闭所有会话")
 
         try:
-            # 关闭由 SessionManager 的 exit_stack 管理的所有上下文 (现在包括连接和会话)
-            # 这将按 LIFO 顺序退出，确保先关闭依赖的资源（如会话使用的流），
-            # 然后关闭被依赖的资源（如连接上下文 stdio_client）
-            await self.exit_stack.aclose()
-            self.logger.info("已关闭所有由 SessionManager AsyncExitStack 管理的上下文 (连接和会话)")
-
+            # 并行关闭所有会话以提高效率，但设置超时
+            close_tasks = []
+            for server_name, session_info in list(self.sessions.items()):
+                close_tasks.append(session_info.cleanup())
+            
+            if close_tasks:
+                try:
+                    await asyncio.wait_for(
+                        asyncio.gather(*close_tasks, return_exceptions=True),
+                        timeout=5.0  # 5秒总超时
+                    )
+                except asyncio.TimeoutError:
+                    self.logger.warning("关闭会话超时，强制清理")
+            
             # 清理会话映射
             self.sessions.clear()
 
-            # ConnectionManager.close_all() 不再需要显式调用，因为连接生命周期由 exit_stack 管理
-
-            self.logger.info("所有会话和连接已成功关闭")
+            self.logger.info("所有会话已成功关闭")
         except Exception as e:
-            self.logger.error(f"关闭会话或连接时出错: {e}")
-            # 重新抛出异常以便上层了解错误
-            raise
+            self.logger.error(f"关闭会话时出错: {e}")
+            # 强制清理会话映射
+            self.sessions.clear()
+            # 不重新抛出异常，避免影响程序退出

@@ -256,8 +256,22 @@ const Settings = ({ isOpen, onClose, selectedModel, setSelectedModel }) => {
   // 处理点击事件，确保适当的函数调用
   const handleOverlayClick = (e) => {
     if (e.target === e.currentTarget) {
-      onClose();
+      handleClose();
     }
+  };
+  
+  // 处理设置页面关闭
+  const handleClose = () => {
+    // 发送自定义事件，通知聊天页面刷新MCP服务器列表
+    window.dispatchEvent(new CustomEvent('settingsClosed', {
+      detail: { 
+        timestamp: Date.now(),
+        reason: 'settings_closed'
+      }
+    }));
+    
+    // 调用原始的关闭回调
+    onClose();
   };
   
   return (
@@ -265,7 +279,7 @@ const Settings = ({ isOpen, onClose, selectedModel, setSelectedModel }) => {
       <ModalContainer>
         <ModalHeader>
           <HeaderTitle>设置</HeaderTitle>
-          <CloseButton onClick={onClose}>
+          <CloseButton onClick={handleClose}>
             <IoClose />
           </CloseButton>
         </ModalHeader>
@@ -400,6 +414,18 @@ const Settings = ({ isOpen, onClose, selectedModel, setSelectedModel }) => {
               </SettingGroup>
             </ContentSection>
             
+            {/* 通知 */}
+            <ContentSection active={activeSection === 'notifications'}>
+              <h3>通知设置</h3>
+              <p>该功能正在开发中</p>
+            </ContentSection>
+            
+            {/* 个性化 */}
+            <ContentSection active={activeSection === 'personalization'}>
+              <h3>个性化设置</h3>
+              <p>该功能正在开发中</p>
+            </ContentSection>
+
             {/* LLM配置 */}
             <ContentSection active={activeSection === 'llm-config'}>
               <SettingGroup>
@@ -423,22 +449,9 @@ const Settings = ({ isOpen, onClose, selectedModel, setSelectedModel }) => {
                 <div style={{ fontSize: '14px', color: '#6e6e80', lineHeight: '1.6' }}>
                   <p>• 支持OpenAI、DeepSeek、Azure OpenAI、Ollama、Anthropic等多种提供商</p>
                   <p>• 可以配置多个不同的模型配置，并设置默认配置</p>
-                  <p>• API密钥将安全存储在本地，不会上传到服务器</p>
                   <p>• 配置完成后，可在聊天界面左上角选择使用的模型</p>
                 </div>
               </SettingGroup>
-            </ContentSection>
-            
-            {/* 通知 */}
-            <ContentSection active={activeSection === 'notifications'}>
-              <h3>通知设置</h3>
-              <p>该功能正在开发中</p>
-            </ContentSection>
-            
-            {/* 个性化 */}
-            <ContentSection active={activeSection === 'personalization'}>
-              <h3>个性化设置</h3>
-              <p>该功能正在开发中</p>
             </ContentSection>
             
             {/* 知识库管理 */}

@@ -2,6 +2,7 @@ import os
 import logging
 import requests
 import json
+import numpy as np
 from typing import List, Optional, Dict, Any
 import chromadb
 from glob import glob
@@ -9,6 +10,7 @@ from pathlib import Path
 
 from .document import Document, load_documents_from_file
 from .config import KnowledgeBaseConfig
+from ...core.config import normalize_embedding
 
 class KnowledgeBaseBuilder:
     """知识库构建器，负责从文件中构建知识库"""
@@ -46,13 +48,13 @@ class KnowledgeBaseBuilder:
     
     def get_embedding(self, text: str) -> List[float]:
         """
-        使用Ollama API获取文本的嵌入向量
+        使用Ollama API获取文本的嵌入向量并归一化
         
         Args:
             text: 需要嵌入的文本
             
         Returns:
-            嵌入向量
+            归一化后的嵌入向量
         """
         url = f"{self.ollama_base_url}/api/embeddings"
         payload = json.dumps({
@@ -68,7 +70,10 @@ class KnowledgeBaseBuilder:
             
             result = response.json()
             if "embedding" in result:
-                return result["embedding"]
+                # 归一化向量
+                raw_embedding = result["embedding"]
+                normalized_embedding = normalize_embedding(raw_embedding)
+                return normalized_embedding
             else:
                 raise Exception(f"API响应中未找到embedding字段: {result}")
         except Exception as e:
@@ -96,18 +101,34 @@ class KnowledgeBaseBuilder:
                                                  file_path_str: str, 
                                                  file_db_id: str, # 文件的唯一DB ID
                                                  kb_id: str, # 知识库ID
-                                                 source_filename: str # 原始文件名
+                                                 source_filename: str, # 原始文件名
+                                                 use_simple_chunking: bool = False # 是否使用简单分块
                                                  ) -> List[Dict[str, Any]]:
         """
         【新增辅助函数】封装了文件加载、解析和元数据初步整理。
         返回 List[Dict[str, Any]]，每个Dict包含 "text" 和 "metadata"。
         metadata 中已包含所有提取的元数据，并加入了 file_ref_id, kb_id, source_filename。
+        
+        Args:
+            file_path_str: 文件路径
+            file_db_id: 文件的唯一DB ID
+            kb_id: 知识库ID
+            source_filename: 原始文件名
+            use_simple_chunking: 是否使用简单分块（True=使用SentenceSplitter，False=使用结构化分块）
         """
         self.logger.info(f"Builder: 正在加载和解析文件 {source_filename} (DB ID: {file_db_id})")
+        if use_simple_chunking:
+            self.logger.info(f"Builder: 使用简单分块模式处理文件 {source_filename}")
+        else:
+            self.logger.info(f"Builder: 使用结构化分块模式处理文件 {source_filename}")
+            
         # 这里的 load_documents_from_file 是你 lib.knowledge 中的核心函数
         # 它应该返回 List[YourCustomDocument] 或 List[Dict[str, Any]]
         # 假设它返回 List[YourCustomDocument]
-        parsed_custom_docs: List[Document] = load_documents_from_file(file_path_str)
+        parsed_custom_docs: List[Document] = load_documents_from_file(
+            file_path_str, 
+            use_simple_chunking=use_simple_chunking
+        )
         
         if not parsed_custom_docs:
             return []
@@ -124,6 +145,9 @@ class KnowledgeBaseBuilder:
             block_metadata['file_ref_id'] = str(file_db_id) 
             block_metadata['knowledge_base_id'] = str(kb_id)
             block_metadata['source_filename'] = source_filename
+            # 添加source字段以兼容查询时的显示
+            block_metadata['source'] = source_filename
+            block_metadata['file_name'] = source_filename  # 额外的兼容字段
             # 你在_parse_markdown_text中提取的其他元数据应该已经在这里了
 
             # 确保元数据值类型正确
@@ -135,7 +159,8 @@ class KnowledgeBaseBuilder:
             
             structured_blocks.append({"text": block_text, "metadata": block_metadata})
         
-        self.logger.info(f"Builder: 文件 {source_filename} 共生成 {len(structured_blocks)} 个结构化文档块。")
+        chunking_method = "简单分块" if use_simple_chunking else "结构化分块"
+        self.logger.info(f"Builder: 文件 {source_filename} 使用{chunking_method}共生成 {len(structured_blocks)} 个文档块。")
         return structured_blocks
     
     def _get_collection(self):
@@ -146,13 +171,22 @@ class KnowledgeBaseBuilder:
                           file_path: str, 
                           file_database_id: str, 
                           knowledge_base_id: str,
-                          source_filename_for_metadata: str # 用于元数据中的文件名
+                          source_filename_for_metadata: str, # 用于元数据中的文件名
+                          use_simple_chunking: bool = False # 是否使用简单分块
                          ) -> Dict[str, Any]:
         """
         【Builder对外核心方法 - 处理单个文件】
         加载、解析、提取元数据、删除旧索引、向量化并存入ChromaDB。
+        
+        Args:
+            file_path: 文件路径
+            file_database_id: 文件的数据库ID
+            knowledge_base_id: 知识库ID
+            source_filename_for_metadata: 用于元数据中的文件名
+            use_simple_chunking: 是否使用简单分块（True=使用SentenceSplitter，False=使用结构化分块）
         """
-        self.logger.info(f"Builder: 开始索引文件 {source_filename_for_metadata} (DB ID: {file_database_id}) for KB: {knowledge_base_id}")
+        chunking_method = "简单分块" if use_simple_chunking else "结构化分块"
+        self.logger.info(f"Builder: 开始索引文件 {source_filename_for_metadata} (DB ID: {file_database_id}) for KB: {knowledge_base_id}，使用{chunking_method}")
         result_summary = {"file_id": file_database_id, "status": "PENDING", "nodes_indexed": 0, "message": ""}
         
         collection = self._get_collection() # 获取ChromaDB collection
@@ -171,7 +205,8 @@ class KnowledgeBaseBuilder:
             file_path_str=file_path,
             file_db_id=file_database_id,
             kb_id=knowledge_base_id,
-            source_filename=source_filename_for_metadata
+            source_filename=source_filename_for_metadata,
+            use_simple_chunking=use_simple_chunking
         )
 
         if not structured_blocks:
@@ -210,10 +245,12 @@ class KnowledgeBaseBuilder:
             self.logger.info(f"Builder: 成功为 file_ref_id='{file_database_id}' 添加/更新 {len(ids_to_add)} 个文档块。")
             result_summary["status"] = "SUCCESS"
             result_summary["nodes_indexed"] = len(ids_to_add)
+            result_summary["message"] = f"成功索引 {len(ids_to_add)} 个文档块，使用{chunking_method}"
             # ...
         else:
             # ... (处理无有效块的情况) ...
             result_summary["status"] = "SUCCESS_NO_NODES"
+            result_summary["message"] = "文件处理完成，但未生成有效的文档块"
 
         return result_summary
 
@@ -236,7 +273,8 @@ class KnowledgeBaseBuilder:
                 file_path=file_model.file_path, # 使用 FileModel 中的路径
                 file_database_id=str(file_model.id),
                 knowledge_base_id=kb_id,
-                source_filename_for_metadata=file_model.file_name # 使用 FileModel 中的文件名
+                source_filename_for_metadata=file_model.file_name, # 使用 FileModel 中的文件名
+                use_simple_chunking=False # 使用结构化分块
             )
             if result["status"] == "SUCCESS":
                 total_nodes_indexed_count += result["nodes_indexed"]

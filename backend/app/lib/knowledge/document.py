@@ -51,12 +51,13 @@ class Document:
     metadata: Optional[Dict[str, Any]] = None
     score: float = 0.0
 
-def load_documents_from_file(file_path: str) -> List[Document]:
+def load_documents_from_file(file_path: str, use_simple_chunking: bool = False) -> List[Document]:
     """
     从文件加载文档
     
     Args:
         file_path: 文件路径
+        use_simple_chunking: 是否使用简单分块（True=使用SentenceSplitter，False=使用结构化分块）
         
     Returns:
         Document列表
@@ -65,6 +66,11 @@ def load_documents_from_file(file_path: str) -> List[Document]:
     file_extension = file_path_obj.suffix.lower()
     
     try:
+        # 如果使用简单分块，直接使用SentenceSplitter处理
+        if use_simple_chunking:
+            return _load_with_simple_chunking(file_path_obj)
+        
+        # 否则使用原有的结构化分块逻辑
         # 根据文件类型选择合适的加载方法
         if file_extension == '.csv':
             return load_from_csv(str(file_path_obj))
@@ -80,6 +86,14 @@ def load_documents_from_file(file_path: str) -> List[Document]:
             # 修改：明确调用 load_document 并强制使用 Pandoc 方法
             logger.info(f"检测到DOCX文件，将使用 Pandoc 方法加载: {file_path_obj}")
             return load_document(file_path_obj, parsing_method='pandoc')
+        elif file_extension in ['.pptx', '.ppt']:
+            # 添加PPT支持，使用unstructured库处理
+            logger.info(f"检测到PPT文件，将使用 unstructured 方法加载: {file_path_obj}")
+            if UNSTRUCTURED_AVAILABLE:
+                return load_from_unstructured(str(file_path_obj))
+            else:
+                logger.warning(f"无法处理PPT文件 {file_path_obj}，未安装UnstructuredReader")
+                return []
         elif file_extension == '.doc' or file_extension == '.pdf': 
             # 对于 .doc 和 .pdf，仍然尝试使用 unstructured (如果可用)
             if UNSTRUCTURED_AVAILABLE:
@@ -292,19 +306,35 @@ def load_from_unstructured(file_path: str) -> List[Document]:
     
     try:
         logger.info("使用UnstructuredReader加载文档")
-        elements = partition(file_path,strategy="hi_res")
+        
+        # 尝试不同的策略，从最简单的开始
+        elements = None
+        strategies = [
+            {},  # 默认策略
+            {"strategy": "fast"},  # 快速策略
+            {"strategy": "hi_res"} if "hi_res" else {}  # 高分辨率策略（如果支持）
+        ]
+        
+        for i, strategy_params in enumerate(strategies):
+            try:
+                logger.info(f"尝试策略 {i+1}: {strategy_params}")
+                elements = partition(file_path, **strategy_params)
+                logger.info(f"策略 {i+1} 成功，获得 {len(elements)} 个元素")
+                break
+            except Exception as strategy_error:
+                logger.warning(f"策略 {i+1} 失败: {strategy_error}")
+                if i == len(strategies) - 1:  # 最后一个策略也失败了
+                    raise strategy_error
+                continue
+        
+        if not elements:
+            logger.error("所有解析策略都失败了")
+            return []
         
         # --- 添加调试日志 ---
-        # 假设 elements 是你从 partition_pdf 得到的列表
-        for i, element in enumerate(elements):
-            print(f"--- Element {i} ---")
-            print(f"Type: {type(element).__name__}")
-            print(f"Text: {element.text[:100]}...") # 打印前100个字符
-            if hasattr(element, 'metadata'):
-                print(f"Metadata: {element.metadata.to_dict()}") # 打印元数据字典
-            if type(element).__name__ == "Title":
-                # 重点检查 Title 元素的元数据
-                pass
+        logger.debug(f"成功解析文档，共 {len(elements)} 个元素")
+        for i, element in enumerate(elements[:3]):  # 只显示前3个元素
+            logger.debug(f"Element {i}: {type(element).__name__} - {str(element)[:50]}...")
         # --- 结束调试日志 ---
         
         # 创建基本元数据
@@ -319,16 +349,15 @@ def load_from_unstructured(file_path: str) -> List[Document]:
             # 提取元素文本和元数据
             element_text = str(element)
             if len(element_text) < 20:  # 跳过非常短的元素
-                logger.debug(f"  Skipping short element: ...")
+                logger.debug("Skipping short element")
                 continue
                 
             # 创建文档
             element_metadata = metadata.copy()
-            element_metadata['element_type'] = element.category # 使用unstructured的类别
-            
-            # --- 添加元数据创建日志 ---
-            logger.debug(f"    Creating Document with metadata: {element_metadata}")
-            # --- 结束元数据创建日志 ---
+            if hasattr(element, 'category'):
+                element_metadata['element_type'] = element.category
+            else:
+                element_metadata['element_type'] = type(element).__name__
             
             doc = Document(
                 text=element_text,
@@ -336,7 +365,6 @@ def load_from_unstructured(file_path: str) -> List[Document]:
             )
             documents.append(doc)
         
-        logger.info(f"成功加载UnstructuredReader")
         logger.info(f"从结构化文档加载了 {len(documents)} 个文档")
         return documents
     except Exception as e:
@@ -959,3 +987,64 @@ def chunk_document(documents: List[Document], chunk_size: int = 512, chunk_overl
 
     # 返回分块后的文本节点列表
     return [] 
+
+def _load_with_simple_chunking(file_path: Path) -> List[Document]:
+    """
+    使用简单分块策略加载文档
+    
+    Args:
+        file_path: 文件路径
+        
+    Returns:
+        Document列表
+    """
+    try:
+        # 使用SimpleDirectoryReader加载文档
+        from llama_index.core.readers import SimpleDirectoryReader
+        
+        documents = SimpleDirectoryReader(
+            input_files=[str(file_path)]
+        ).load_data()
+        
+        # 使用SentenceSplitter进行分块
+        splitter = SentenceSplitter(
+            chunk_size=2000,  # 增大分块大小
+            chunk_overlap=400  # 增大重叠
+        )
+        
+        # 为每个doc添加文件来源
+        for doc in documents:
+            doc.metadata["source"] = file_path.name
+            doc.metadata["file_path"] = str(file_path)
+        
+        # 获取分块后的节点
+        nodes = splitter.get_nodes_from_documents(documents)
+        
+        # 转换为我们的Document格式
+        result_documents = []
+        for i, node in enumerate(nodes):
+            # 创建基本元数据
+            metadata = {
+                "source": file_path.name,
+                "file_path": str(file_path),
+                "chunk_index": i,
+                "block_type": "chunk",
+                "chunking_method": "simple"
+            }
+            
+            # 合并原有元数据
+            if hasattr(node, 'metadata') and node.metadata:
+                metadata.update(node.metadata)
+            
+            doc = Document(
+                text=node.text,
+                metadata=metadata
+            )
+            result_documents.append(doc)
+        
+        logger.info(f"使用简单分块加载了 {len(result_documents)} 个文档块")
+        return result_documents
+        
+    except Exception as e:
+        logger.error(f"简单分块加载文件时出错 {file_path}: {str(e)}")
+        return [] 

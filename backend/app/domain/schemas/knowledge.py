@@ -5,6 +5,8 @@ from pydantic import BaseModel, Field
 from typing import List, Dict, Optional, Union, Any
 from datetime import datetime
 
+from ..models.knowledge_base import KnowledgeBaseType
+
 class KnowledgeBaseCreate(BaseModel):
     """创建知识库请求"""
     name: str = Field(..., title="知识库名称")
@@ -74,4 +76,40 @@ class QueryResponse(BaseModel):
 
 class KnowledgeShareRequest(BaseModel):
     """共享知识库请求"""
-    user_id: str = Field(..., title="用户ID") 
+    user_id: str = Field(..., title="用户ID")
+
+class KnowledgeBaseUpdateRequest(BaseModel):
+    """知识库更新请求参数对象"""
+    kb_id: str = Field(..., description="知识库ID")
+    name: Optional[str] = Field(None, description="知识库名称")
+    description: Optional[str] = Field(None, description="知识库描述")
+    kb_type: Optional[KnowledgeBaseType] = Field(None, description="知识库类型")
+    is_public: Optional[bool] = Field(None, description="是否公开")
+
+class FileUploadRequest(BaseModel):
+    """文件上传请求参数对象"""
+    kb_id: str = Field(..., description="知识库ID")
+    file_name: str = Field(..., description="文件名")
+    file_content: bytes = Field(..., description="文件内容")
+    file_type: Optional[str] = Field(None, description="文件类型")
+
+class FileDeleteRequest(BaseModel):
+    """文件删除请求参数对象"""
+    kb_id: str = Field(..., description="知识库ID")
+    file_name: str = Field(..., description="文件名")
+
+class KnowledgeBaseShareRequest(BaseModel):
+    """知识库共享请求参数对象"""
+    kb_id: str = Field(..., description="知识库ID")
+    user_id: str = Field(..., description="用户ID")
+
+class KnowledgeQueryRequest(BaseModel):
+    """知识库查询请求参数对象"""
+    kb_id: Optional[str] = Field(None, description="单个知识库ID")
+    kb_ids: Optional[List[str]] = Field(None, description="多个知识库ID")
+    query_text: str = Field(..., description="查询文本")
+    top_k: int = Field(5, description="返回结果数量")
+
+class IndexRebuildRequest(BaseModel):
+    """索引重建请求参数对象"""
+    kb_id: str = Field(..., description="知识库ID") 

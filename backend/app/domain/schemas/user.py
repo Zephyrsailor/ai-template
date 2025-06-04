@@ -1,62 +1,52 @@
 """
-用户相关的数据验证模型
+用户相关的数据模型
 """
-from pydantic import BaseModel, EmailStr, Field
-from typing import Optional, List
-from enum import Enum
-from datetime import datetime
+from typing import Optional
+from pydantic import BaseModel, Field, EmailStr
 
+class UserBase(BaseModel):
+    """用户基础模型"""
+    username: str = Field(..., description="用户名")
+    email: EmailStr = Field(..., description="邮箱")
+    full_name: Optional[str] = Field(default=None, description="全名")
 
-class UserRole(str, Enum):
-    """用户角色枚举"""
-    ADMIN = "admin"
-    USER = "user"
-
-
-class UserCreate(BaseModel):
-    """用户注册请求"""
-    username: str = Field(..., min_length=3, max_length=50)
-    email: EmailStr
-    password: str = Field(..., min_length=6)
-    full_name: Optional[str] = None
-
+class UserCreate(UserBase):
+    """用户创建模型"""
+    password: str = Field(..., min_length=8, description="密码")
 
 class UserLogin(BaseModel):
-    """用户登录请求"""
-    username: str
-    password: str
+    """用户登录模型"""
+    username: str = Field(..., description="用户名")
+    password: str = Field(..., description="密码")
 
+class UserResponse(UserBase):
+    """用户响应模型"""
+    id: str = Field(..., description="用户ID")
+    is_active: bool = Field(default=True, description="是否激活")
+    created_at: Optional[str] = Field(default=None, description="创建时间")
+    
+    class Config:
+        """Pydantic配置"""
+        from_attributes = True
 
 class UserUpdate(BaseModel):
-    """用户信息更新请求"""
-    email: Optional[EmailStr] = None
-    full_name: Optional[str] = None
-
+    """用户更新模型"""
+    email: Optional[EmailStr] = Field(default=None, description="邮箱")
+    full_name: Optional[str] = Field(default=None, description="全名")
+    is_active: Optional[bool] = Field(default=None, description="是否激活")
 
 class PasswordChange(BaseModel):
-    """密码修改请求"""
-    current_password: str
-    new_password: str = Field(..., min_length=6)
-
-
-class UserResponse(BaseModel):
-    """用户信息响应"""
-    id: str
-    username: str
-    email: EmailStr
-    full_name: Optional[str] = None
-    role: UserRole
-    created_at: datetime
-
+    """密码修改模型"""
+    old_password: str = Field(..., description="旧密码")
+    new_password: str = Field(..., min_length=8, description="新密码")
 
 class Token(BaseModel):
-    """认证令牌"""
-    access_token: str
-    token_type: str = "bearer"
-
+    """令牌模型"""
+    access_token: str = Field(..., description="访问令牌")
+    token_type: str = Field(default="bearer", description="令牌类型")
+    expires_in: Optional[int] = Field(default=None, description="过期时间（秒）")
 
 class TokenData(BaseModel):
-    """令牌数据"""
-    user_id: str
-    username: str
-    role: UserRole 
+    """令牌数据模型"""
+    username: Optional[str] = Field(default=None, description="用户名")
+    user_id: Optional[str] = Field(default=None, description="用户ID") 

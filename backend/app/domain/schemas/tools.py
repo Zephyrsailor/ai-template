@@ -1,6 +1,7 @@
 """
 工具相关的数据验证模型
 """
+import re
 from pydantic import BaseModel, Field
 from typing import List, Dict, Optional, Union, Any
 
@@ -29,20 +30,21 @@ class Tool(BaseModel):
             A formatted string describing the tool.
         """
         args_desc = []
-        if "properties" in self.input_schema:
-            for param_name, param_info in self.input_schema["properties"].items():
-                arg_desc = (
-                    f"- {param_name}: {param_info.get('description', 'No description')}"
-                )
-                if param_name in self.input_schema.get("required", []):
-                    arg_desc += " (required)"
-                args_desc.append(arg_desc)
+        for param in self.parameters:
+            arg_desc = f"- {param.name}: {param.description}"
+            if param.required:
+                arg_desc += " (required)"
+            if param.type:
+                arg_desc += f" (type: {param.type})"
+            if param.enum:
+                arg_desc += f" (options: {', '.join(map(str, param.enum))})"
+            args_desc.append(arg_desc)
 
         return f"""
 Tool: {self.name}
 Description: {self.description}
 Arguments:
-{chr(10).join(args_desc)}
+{chr(10).join(args_desc) if args_desc else "No arguments"}
 """
     
     def to_openai_format(self) -> Dict[str, Any]:
@@ -68,7 +70,7 @@ Arguments:
         return {
             "type": "function",
             "function": {
-                "name": self.name,
+                "name": self.name,  # 直接使用name字段，已经是OpenAI兼容格式
                 "description": self.description,
                 "parameters": openai_params
             }

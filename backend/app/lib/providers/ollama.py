@@ -70,6 +70,7 @@ class OllamaProvider(BaseProvider):
             full_response = ""
             has_tool_call = False
             model_response_error = False
+            thinking_content = ""  # 用于收集thinking内容
             
             try:
                 async with aiohttp.ClientSession() as session:
@@ -102,12 +103,32 @@ class OllamaProvider(BaseProvider):
                                             if content_chunk:
                                                 full_response += content_chunk
                                                 
-                                                # 检测是否包含工具调用
-                                                if "```" in full_response and not has_tool_call:
+                                                # 检测是否包含工具调用（更精确的检测）
+                                                if not has_tool_call and ("```json" in full_response or '"tool_name"' in full_response):
                                                     has_tool_call = True
                                                 
-                                                # 如果没有工具调用，直接输出内容
-                                                if not has_tool_call:
+                                                # 如果检测到工具调用，收集thinking内容
+                                                if has_tool_call:
+                                                    # 提取工具调用之前的内容作为thinking
+                                                    if "```json" in full_response:
+                                                        thinking_part = full_response.split("```json")[0].strip()
+                                                        if thinking_part and thinking_part != thinking_content:
+                                                            new_thinking = thinking_part[len(thinking_content):]
+                                                            if new_thinking:
+                                                                thinking_content = thinking_part
+                                                                yield ModelEvent(EventType.THINKING, new_thinking)
+                                                    elif '"tool_name"' in full_response:
+                                                        # 对于没有代码块的工具调用，查找JSON开始位置
+                                                        json_start = full_response.find('{"tool_name"')
+                                                        if json_start > 0:
+                                                            thinking_part = full_response[:json_start].strip()
+                                                            if thinking_part and thinking_part != thinking_content:
+                                                                new_thinking = thinking_part[len(thinking_content):]
+                                                                if new_thinking:
+                                                                    thinking_content = thinking_part
+                                                                    yield ModelEvent(EventType.THINKING, new_thinking)
+                                                else:
+                                                    # 如果没有工具调用，直接输出内容
                                                     yield ModelEvent(EventType.CONTENT, content_chunk)
                                                     
                                     except json.JSONDecodeError:
@@ -125,10 +146,20 @@ class OllamaProvider(BaseProvider):
                                 full_response = content
                                 
                                 # 检测是否包含工具调用
-                                if "```" in full_response:
+                                if "```json" in full_response or '"tool_name"' in full_response:
                                     has_tool_call = True
-                                
-                                if not has_tool_call:
+                                    
+                                    # 提取thinking内容
+                                    if "```json" in full_response:
+                                        thinking_content = full_response.split("```json")[0].strip()
+                                    elif '"tool_name"' in full_response:
+                                        json_start = full_response.find('{"tool_name"')
+                                        if json_start > 0:
+                                            thinking_content = full_response[:json_start].strip()
+                                    
+                                    if thinking_content:
+                                        yield ModelEvent(EventType.THINKING, thinking_content)
+                                else:
                                     yield ModelEvent(EventType.CONTENT, full_response)
                                     
             except aiohttp.ClientError as api_error:
@@ -151,6 +182,11 @@ class OllamaProvider(BaseProvider):
                 tool_call_json = self._parse_tool_call(full_response)
                 if tool_call_json:
                     yield ModelEvent(EventType.TOOL_CALL, tool_call_json)
+                else:
+                    # 如果工具调用解析失败，输出剩余内容
+                    remaining_content = full_response[len(thinking_content):].strip()
+                    if remaining_content:
+                        yield ModelEvent(EventType.CONTENT, remaining_content)
                     
         except Exception as e:
             error_msg = f"Ollama 对话处理错误: {str(e)}"
@@ -189,26 +225,43 @@ class OllamaProvider(BaseProvider):
         解析响应中的工具调用JSON
         """
         try:
-            # 查找JSON代码块
-            json_pattern = r'```json\s*(\[.*?\])\s*```'
+            # 查找JSON代码块 - 支持对象和数组格式
+            json_pattern = r'```json\s*(\{.*?\}|\[.*?\])\s*```'
             matches = re.findall(json_pattern, response, re.DOTALL)
             
             if matches:
                 json_str = matches[0].strip()
                 # 验证JSON格式
-                json.loads(json_str)
+                parsed_json = json.loads(json_str)
+                
+                # 如果是单个对象，转换为数组格式
+                if isinstance(parsed_json, dict):
+                    json_str = json.dumps([parsed_json])
+                
                 return json_str
             
-            # 如果没有找到代码块，尝试直接解析
-            json_pattern = r'(\[.*?\])'
-            matches = re.findall(json_pattern, response, re.DOTALL)
+            # 如果没有找到代码块，尝试直接解析对象或数组
+            # 改进的正则表达式，更精确地匹配JSON结构
+            json_patterns = [
+                r'\{[^{}]*"tool_name"[^{}]*\}',  # 匹配包含tool_name的对象
+                r'\[[^\[\]]*\{[^{}]*"tool_name"[^{}]*\}[^\[\]]*\]'  # 匹配包含tool_name的数组
+            ]
             
-            for match in matches:
-                try:
-                    json.loads(match.strip())
-                    return match.strip()
-                except:
-                    continue
+            for pattern in json_patterns:
+                matches = re.findall(pattern, response, re.DOTALL)
+                for match in matches:
+                    try:
+                        parsed_json = json.loads(match.strip())
+                        
+                        # 验证是否为有效的工具调用
+                        if isinstance(parsed_json, dict) and "tool_name" in parsed_json:
+                            return json.dumps([parsed_json])
+                        elif isinstance(parsed_json, list):
+                            # 验证数组中的每个元素都是有效的工具调用
+                            if all(isinstance(item, dict) and "tool_name" in item for item in parsed_json):
+                                return match.strip()
+                    except:
+                        continue
                     
         except Exception as e:
             logger.error(f"解析工具调用失败: {str(e)}")

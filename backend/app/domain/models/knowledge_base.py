@@ -1,57 +1,83 @@
 """
-知识库相关数据模型
+知识库模型
 """
 from datetime import datetime
+from typing import Optional, Dict, Any, List
 from enum import Enum
-from typing import Dict, List, Optional, Any
+
+from sqlalchemy import Column, String, Text, Integer, Boolean, ForeignKey
+from sqlalchemy.orm import relationship
+
+from ...core.database import BaseModel
 
 
-class KnowledgeBaseStatus(str, Enum):
+class KnowledgeBaseType(Enum):
+    """知识库类型枚举"""
+    PERSONAL = "personal"
+    SHARED = "shared"
+    PUBLIC = "public"
+
+
+class KnowledgeBaseStatus(Enum):
     """知识库状态枚举"""
     ACTIVE = "active"
+    INACTIVE = "inactive"
     BUILDING = "building"
     ERROR = "error"
-    DELETED = "deleted"
 
 
-class KnowledgeBaseType(str, Enum):
-    """知识库类型枚举"""
-    PERSONAL = "personal"  # 个人知识库
-    SHARED = "shared"      # 共享给部分用户的知识库
-    PUBLIC = "public"      # 公开知识库
+class FileStatus(Enum):
+    """文件状态枚举"""
+    UPLOADED = "uploaded"
+    PROCESSING = "processing"
+    PROCESSED = "processed"
+    INDEXED = "indexed"
+    ERROR = "error"
 
 
-class KnowledgeBase:
-    """知识库模型"""
-    def __init__(
-        self,
-        id: str,
-        name: str,
-        description: Optional[str] = None,
-        owner_id: Optional[str] = None,
-        embedding_model: str = "default",
-        created_at: Optional[datetime] = None,
-        updated_at: Optional[datetime] = None,
-        status: KnowledgeBaseStatus = KnowledgeBaseStatus.ACTIVE,
-        kb_type: KnowledgeBaseType = KnowledgeBaseType.PERSONAL,
-        file_count: int = 0,
-        document_count: int = 0,
-        shared_with: Optional[List[str]] = None,
-        is_public: bool = False,
-    ):
-        self.id = id
-        self.name = name
-        self.description = description
-        self.owner_id = owner_id
-        self.embedding_model = embedding_model
-        self.created_at = created_at or datetime.now()
-        self.updated_at = updated_at
-        self.status = status
-        self.kb_type = kb_type
-        self.file_count = file_count
-        self.document_count = document_count
-        self.shared_with = shared_with or []
-        self.is_public = is_public
+class KnowledgeBase(BaseModel):
+    """知识库模型 - SQLAlchemy版本"""
+    __tablename__ = "knowledge_bases"
+    
+    name = Column(String(255), nullable=False)
+    description = Column(Text)
+    owner_id = Column(String, ForeignKey("users.id"))
+    embedding_model = Column(String(100), default="default")
+    status = Column(String(50), default=KnowledgeBaseStatus.ACTIVE.value)
+    kb_type = Column(String(50), default=KnowledgeBaseType.PERSONAL.value)
+    file_count = Column(Integer, default=0)
+    document_count = Column(Integer, default=0)
+    shared_with = Column(Text)  # JSON string
+    
+    # 关系 - 临时注释避免循环依赖
+    # owner = relationship("User", back_populates="knowledge_bases")
+    # files = relationship("KnowledgeFile", back_populates="knowledge_base", cascade="all, delete-orphan")
+    # shares = relationship("KnowledgeShare", back_populates="knowledge_base", cascade="all, delete-orphan")
+    
+    @property
+    def is_public(self) -> bool:
+        """是否为公开知识库"""
+        return self.kb_type == KnowledgeBaseType.PUBLIC.value
+    
+    @is_public.setter
+    def is_public(self, value: bool):
+        """设置是否为公开知识库"""
+        if value:
+            self.kb_type = KnowledgeBaseType.PUBLIC.value
+        else:
+            # 如果当前是公开类型，改为个人类型
+            if self.kb_type == KnowledgeBaseType.PUBLIC.value:
+                self.kb_type = KnowledgeBaseType.PERSONAL.value
+    
+    def set_public(self, is_public: bool):
+        """设置知识库公开状态的辅助方法"""
+        if is_public:
+            self.kb_type = KnowledgeBaseType.PUBLIC.value
+        else:
+            # 如果当前是公开类型，改为个人类型
+            if self.kb_type == KnowledgeBaseType.PUBLIC.value:
+                self.kb_type = KnowledgeBaseType.PERSONAL.value
+    
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典"""
         return {
@@ -60,70 +86,53 @@ class KnowledgeBase:
             "description": self.description,
             "owner_id": self.owner_id,
             "embedding_model": self.embedding_model,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
-            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
             "status": self.status,
             "kb_type": self.kb_type,
             "file_count": self.file_count,
             "document_count": self.document_count,
             "shared_with": self.shared_with,
-            "is_public": self.is_public
+            "is_public": self.is_public,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "KnowledgeBase":
-        """从字典创建知识库"""
-        if "kb_type" in data and not isinstance(data["kb_type"], KnowledgeBaseType):
-            data["kb_type"] = KnowledgeBaseType(data["kb_type"])
-            
-        if "status" in data and not isinstance(data["status"], KnowledgeBaseStatus):
-            data["status"] = KnowledgeBaseStatus(data["status"])
-            
-        if "created_at" in data and isinstance(data["created_at"], str) and data["created_at"]:
-            data["created_at"] = datetime.fromisoformat(data["created_at"])
-            
-        if "updated_at" in data and isinstance(data["updated_at"], str) and data["updated_at"]:
-            data["updated_at"] = datetime.fromisoformat(data["updated_at"])
-            
-        return cls(**data)
-
-
-class FileStatus(str, Enum):
-    """文件状态枚举"""
-    UPLOADED = "uploaded"    # 已上传
-    PROCESSING = "processing" # 处理中
-    INDEXED = "indexed"      # 已索引
-    ERROR = "error"          # 错误
-
-
-class KnowledgeFile:
-    """知识库文件模型"""
-    def __init__(
-        self,
-        id: str,
-        knowledge_base_id: str,
-        file_name: str,
-        file_path: str,
-        file_type: Optional[str] = None,
-        file_size: int = 0,
-        status: FileStatus = FileStatus.UPLOADED,
-        created_at: Optional[datetime] = None,
-        updated_at: Optional[datetime] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-        chunk_count: int = 0,
-    ):
-        self.id = id
-        self.knowledge_base_id = knowledge_base_id
-        self.file_name = file_name
-        self.file_path = file_path
-        self.file_type = file_type
-        self.file_size = file_size
-        self.status = status
-        self.created_at = created_at or datetime.now()
-        self.updated_at = updated_at
-        self.metadata = metadata or {}
-        self.chunk_count = chunk_count
+        """从字典创建知识库对象"""
+        # 过滤掉计算属性
+        filtered_data = {k: v for k, v in data.items() 
+                        if k not in ['is_public']}
         
+        # 处理日期字段
+        for date_field in ['created_at', 'updated_at']:
+            if date_field in filtered_data and isinstance(filtered_data[date_field], str):
+                try:
+                    filtered_data[date_field] = datetime.fromisoformat(filtered_data[date_field])
+                except (ValueError, TypeError):
+                    filtered_data[date_field] = None
+        
+        return cls(**filtered_data)
+    
+    def __repr__(self):
+        return f"<KnowledgeBase(id={self.id}, name={self.name}, owner_id={self.owner_id})>"
+
+
+class KnowledgeFile(BaseModel):
+    """知识库文件模型 - SQLAlchemy版本"""
+    __tablename__ = "knowledge_files"
+    
+    knowledge_base_id = Column(String, ForeignKey("knowledge_bases.id"), nullable=False)
+    file_name = Column(String(255), nullable=False)
+    file_path = Column(String(500), nullable=False)
+    file_type = Column(String(150))  # 增加长度以支持长MIME类型
+    file_size = Column(Integer, default=0)
+    status = Column(String(50), default=FileStatus.UPLOADED.value)
+    file_metadata = Column(Text)  # JSON string
+    chunk_count = Column(Integer, default=0)
+    
+    # 关系 - 临时注释避免循环依赖
+    # knowledge_base = relationship("KnowledgeBase", back_populates="files")
+    
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典"""
         return {
@@ -134,22 +143,60 @@ class KnowledgeFile:
             "file_type": self.file_type,
             "file_size": self.file_size,
             "status": self.status,
+            "metadata": self.file_metadata,
+            "chunk_count": self.chunk_count,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
-            "metadata": self.metadata,
-            "chunk_count": self.chunk_count,
         }
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "KnowledgeFile":
-        """从字典创建文件"""
-        if "status" in data and not isinstance(data["status"], FileStatus):
-            data["status"] = FileStatus(data["status"])
-            
-        if "created_at" in data and isinstance(data["created_at"], str) and data["created_at"]:
-            data["created_at"] = datetime.fromisoformat(data["created_at"])
-            
-        if "updated_at" in data and isinstance(data["updated_at"], str) and data["updated_at"]:
-            data["updated_at"] = datetime.fromisoformat(data["updated_at"])
-            
-        return cls(**data) 
+        """从字典创建文件对象"""
+        # 处理日期字段
+        for date_field in ['created_at', 'updated_at']:
+            if date_field in data and isinstance(data[date_field], str):
+                try:
+                    data[date_field] = datetime.fromisoformat(data[date_field])
+                except (ValueError, TypeError):
+                    data[date_field] = None
+        
+        return cls(**data)
+    
+    def __repr__(self):
+        return f"<KnowledgeFile(id={self.id}, name={self.file_name}, kb_id={self.knowledge_base_id})>"
+
+
+class KnowledgeShare(BaseModel):
+    """知识库共享模型 - SQLAlchemy版本"""
+    __tablename__ = "knowledge_shares"
+    
+    knowledge_base_id = Column(String, ForeignKey("knowledge_bases.id"), nullable=False)
+    user_id = Column(String, ForeignKey("users.id"), nullable=False)
+    
+    # 关系 - 临时注释避免循环依赖
+    # knowledge_base = relationship("KnowledgeBase", back_populates="shares")
+    # user = relationship("User")
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """转换为字典"""
+        return {
+            "id": self.id,
+            "knowledge_base_id": self.knowledge_base_id,
+            "user_id": self.user_id,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "KnowledgeShare":
+        """从字典创建共享对象"""
+        # 处理日期字段
+        if 'created_at' in data and isinstance(data['created_at'], str):
+            try:
+                data['created_at'] = datetime.fromisoformat(data['created_at'])
+            except (ValueError, TypeError):
+                data['created_at'] = None
+        
+        return cls(**data)
+    
+    def __repr__(self):
+        return f"<KnowledgeShare(id={self.id}, kb_id={self.knowledge_base_id}, user_id={self.user_id})>" 

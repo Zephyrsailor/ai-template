@@ -1,0 +1,835 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+# Cursor MDC Rules - Python测试开发规范
+
+## 项目结构规范
+
+### 目录组织
+```
+project_root/
+├── src/
+│   ├── models/
+│   ├── schemas/
+│   ├── repositories/
+│   ├── services/
+│   └── routers/
+├── tests/
+│   ├── unit/
+│   │   ├── test_models/
+│   │   ├── test_schemas/
+│   │   ├── test_repositories/
+│   │   ├── test_services/
+│   │   └── test_routers/
+│   ├── integration/
+│   ├── fixtures/
+│   ├── conftest.py
+│   └── __init__.py
+├── pytest.ini
+└── requirements-test.txt
+```
+
+### 文件命名规范
+- 测试文件：`test_*.py` 或 `*_test.py`
+- 测试类：`Test*` 或 `*Test`
+- 测试函数：`test_*`
+- 测试方法描述性命名：`test_should_xxx_when_xxx`
+
+## 测试框架配置
+
+### pytest.ini 配置
+```ini
+[tool:pytest]
+testpaths = tests
+python_files = test_*.py *_test.py
+python_classes = Test* *Test
+python_functions = test_*
+addopts = 
+    -v
+    --strict-markers
+    --strict-config
+    --tb=short
+    --cov=src
+    --cov-report=term-missing
+    --cov-report=html:htmlcov
+    --cov-fail-under=80
+markers =
+    unit: 单元测试
+    integration: 集成测试
+    e2e: 端到端测试
+    slow: 耗时测试
+    database: 需要数据库的测试
+    external: 需要外部服务的测试
+filterwarnings =
+    ignore::DeprecationWarning
+    ignore::PendingDeprecationWarning
+```
+
+### requirements-test.txt
+```
+pytest>=7.0.0
+pytest-cov>=4.0.0
+pytest-asyncio>=0.21.0
+pytest-mock>=3.10.0
+pytest-xdist>=3.0.0
+pytest-html>=3.1.0
+factory-boy>=3.2.0
+faker>=18.0.0
+httpx>=0.24.0
+respx>=0.20.0
+```
+
+## 测试编写规范
+
+### 1. 基础测试结构 - AAA模式
+```python
+def test_user_creation():
+    # Arrange - 准备测试数据
+    user_data = {
+        "username": "testuser",
+        "email": "test@example.com",
+        "age": 25
+    }
+    
+    # Act - 执行被测试的操作
+    user = create_user(user_data)
+    
+    # Assert - 验证结果
+    assert user.username == "testuser"
+    assert user.email == "test@example.com"
+    assert user.age == 25
+    assert user.id is not None
+```
+
+### 2. 测试类组织
+```python
+class TestUserService:
+    """用户服务测试类
+    
+    测试用户相关的业务逻辑，包括：
+    - 用户创建
+    - 用户验证
+    - 用户更新
+    - 异常处理
+    """
+    
+    @pytest.fixture(autouse=True)
+    def setup_method(self):
+        """每个测试方法前执行的设置"""
+        self.user_service = UserService()
+        self.mock_repo = Mock()
+    
+    def test_create_user_success(self):
+        """测试成功创建用户"""
+        pass
+    
+    def test_create_user_with_duplicate_email_should_raise_error(self):
+        """测试重复邮箱创建用户应该抛出异常"""
+        pass
+```
+
+### 3. 参数化测试
+```python
+@pytest.mark.parametrize("username,email,expected_valid", [
+    ("validuser", "valid@example.com", True),
+    ("", "valid@example.com", False),
+    ("validuser", "invalid-email", False),
+    ("u", "valid@example.com", False),  # 用户名太短
+    ("a" * 51, "valid@example.com", False),  # 用户名太长
+])
+def test_user_validation(username, email, expected_valid):
+    """参数化测试用户验证逻辑"""
+    user_data = {"username": username, "email": email}
+    result = validate_user(user_data)
+    assert result.is_valid == expected_valid
+```
+
+### 4. 异常测试
+```python
+def test_divide_by_zero_should_raise_value_error():
+    """测试除零操作应该抛出ValueError异常"""
+    calculator = Calculator()
+    
+    with pytest.raises(ValueError, match="除数不能为零"):
+        calculator.divide(10, 0)
+
+def test_invalid_user_data_should_raise_validation_error():
+    """测试无效用户数据应该抛出验证异常"""
+    invalid_data = {"username": "", "email": "invalid"}
+    
+    with pytest.raises(ValidationError) as exc_info:
+        create_user(invalid_data)
+    
+    assert "username" in str(exc_info.value)
+    assert "email" in str(exc_info.value)
+```
+
+## 层级测试规范
+
+### 1. Model层测试
+```python
+class TestUserModel:
+    """用户模型测试
+    
+    专注于测试：
+    - 模型字段验证
+    - 模型方法逻辑
+    - 数据转换
+    - 不涉及数据库操作
+    """
+    
+    def test_user_model_creation(self):
+        """测试用户模型创建"""
+        user = User(
+            username="testuser",
+            email="test@example.com",
+            created_at=datetime.now()
+        )
+        assert user.username == "testuser"
+        assert isinstance(user.created_at, datetime)
+    
+    def test_user_display_name_method(self):
+        """测试用户显示名称方法"""
+        user = User(username="john_doe", first_name="John", last_name="Doe")
+        assert user.display_name() == "John Doe"
+    
+    def test_user_is_active_default_true(self):
+        """测试用户默认状态为激活"""
+        user = User(username="testuser", email="test@example.com")
+        assert user.is_active() is True
+```
+
+### 2. Schema层测试
+```python
+class TestUserSchemas:
+    """用户Schema测试
+    
+    专注于测试：
+    - 数据序列化/反序列化
+    - 字段验证规则
+    - 数据转换逻辑
+    """
+    
+    def test_user_create_schema_valid_data(self):
+        """测试用户创建Schema的有效数据"""
+        data = {
+            "username": "newuser",
+            "email": "new@example.com",
+            "password": "securepass123"
+        }
+        schema = UserCreateSchema(**data)
+        assert schema.username == "newuser"
+        assert schema.email == "new@example.com"
+    
+    def test_user_response_schema_excludes_password(self):
+        """测试用户响应Schema排除密码字段"""
+        user_data = {
+            "id": 1,
+            "username": "testuser",
+            "email": "test@example.com",
+            "password_hash": "hashed_password"
+        }
+        schema = UserResponseSchema.from_orm(user_data)
+        response_dict = schema.dict()
+        assert "password" not in response_dict
+        assert "password_hash" not in response_dict
+```
+
+### 3. Repository层测试
+```python
+class TestUserRepository:
+    """用户仓储测试
+    
+    专注于测试：
+    - 数据库CRUD操作
+    - 查询逻辑
+    - 数据持久化
+    使用Mock数据库连接
+    """
+    
+    @pytest.fixture
+    def mock_db_session(self):
+        """Mock数据库会话"""
+        return Mock(spec=AsyncSession)
+    
+    @pytest.fixture
+    def user_repository(self, mock_db_session):
+        """用户仓储实例"""
+        return UserRepository(mock_db_session)
+    
+    @pytest.mark.asyncio
+    async def test_create_user(self, user_repository, mock_db_session):
+        """测试创建用户"""
+        user_data = {"username": "testuser", "email": "test@example.com"}
+        expected_user = User(id=1, **user_data)
+        
+        # Mock数据库操作
+        mock_db_session.add = Mock()
+        mock_db_session.commit = AsyncMock()
+        mock_db_session.refresh = AsyncMock()
+        
+        # 模拟数据库返回
+        with patch.object(User, '__init__', return_value=None):
+            result = await user_repository.create(user_data)
+            
+        mock_db_session.add.assert_called_once()
+        mock_db_session.commit.assert_called_once()
+```
+
+### 4. Service层测试
+```python
+class TestUserService:
+    """用户服务测试
+    
+    专注于测试：
+    - 业务逻辑
+    - 服务间协调
+    - 错误处理
+    - 事务管理
+    """
+    
+    @pytest.fixture
+    def mock_user_repository(self):
+        return Mock(spec=UserRepository)
+    
+    @pytest.fixture
+    def mock_email_service(self):
+        return Mock(spec=EmailService)
+    
+    @pytest.fixture
+    def user_service(self, mock_user_repository, mock_email_service):
+        return UserService(
+            user_repository=mock_user_repository,
+            email_service=mock_email_service
+        )
+    
+    @pytest.mark.asyncio
+    async def test_register_user_success(self, user_service, mock_user_repository, mock_email_service):
+        """测试用户注册成功流程"""
+        # Arrange
+        user_data = UserCreateSchema(
+            username="newuser",
+            email="new@example.com",
+            password="password123"
+        )
+        created_user = User(id=1, username="newuser", email="new@example.com")
+        
+        mock_user_repository.get_by_email = AsyncMock(return_value=None)
+        mock_user_repository.create = AsyncMock(return_value=created_user)
+        mock_email_service.send_welcome_email = AsyncMock()
+        
+        # Act
+        result = await user_service.register_user(user_data)
+        
+        # Assert
+        assert result.username == "newuser"
+        mock_user_repository.create.assert_called_once()
+        mock_email_service.send_welcome_email.assert_called_once_with(created_user)
+```
+
+### 5. Router层测试
+```python
+class TestUserRouter:
+    """用户路由测试
+    
+    专注于测试：
+    - HTTP请求/响应
+    - 状态码
+    - 数据序列化
+    - 认证授权
+    """
+    
+    @pytest.fixture
+    def client(self):
+        """测试客户端"""
+        return TestClient(app)
+    
+    @pytest.fixture
+    def mock_user_service(self):
+        """Mock用户服务"""
+        with patch('app.routers.user.user_service') as mock:
+            yield mock
+    
+    def test_create_user_success(self, client, mock_user_service):
+        """测试创建用户API成功"""
+        # Arrange
+        user_data = {
+            "username": "testuser",
+            "email": "test@example.com",
+            "password": "password123"
+        }
+        expected_user = User(id=1, username="testuser", email="test@example.com")
+        mock_user_service.register_user.return_value = expected_user
+        
+        # Act
+        response = client.post("/users/", json=user_data)
+        
+        # Assert
+        assert response.status_code == 201
+        response_data = response.json()
+        assert response_data["username"] == "testuser"
+        assert response_data["email"] == "test@example.com"
+        assert "password" not in response_data
+    
+    def test_get_user_not_found(self, client, mock_user_service):
+        """测试获取不存在的用户"""
+        mock_user_service.get_user.return_value = None
+        
+        response = client.get("/users/999")
+        
+        assert response.status_code == 404
+        assert response.json()["detail"] == "用户不存在"
+```
+
+## Fixture使用规范
+
+### 1. conftest.py配置
+```python
+# tests/conftest.py
+import pytest
+import asyncio
+from unittest.mock import Mock, AsyncMock
+from sqlalchemy.ext.asyncio import AsyncSession
+from src.database import get_db
+from src.models import User
+from tests.factories import UserFactory
+
+@pytest.fixture(scope="session")
+def event_loop():
+    """创建事件循环"""
+    loop = asyncio.get_event_loop_policy().new_event_loop()
+    yield loop
+    loop.close()
+
+@pytest.fixture
+def mock_db_session():
+    """Mock数据库会话"""
+    session = Mock(spec=AsyncSession)
+    session.add = Mock()
+    session.commit = AsyncMock()
+    session.rollback = AsyncMock()
+    session.close = AsyncMock()
+    return session
+
+@pytest.fixture
+def sample_user():
+    """示例用户数据"""
+    return UserFactory.build()
+
+@pytest.fixture
+def authenticated_user():
+    """已认证用户"""
+    return UserFactory.build(is_active=True, is_verified=True)
+
+@pytest.fixture(autouse=True)
+def reset_mocks():
+    """自动重置所有Mock对象"""
+    yield
+    # 在每个测试后重置Mock
+    Mock.reset_mock()
+```
+
+### 2. Factory使用
+```python
+# tests/factories.py
+import factory
+from datetime import datetime, timezone
+from src.models.user import User
+
+class UserFactory(factory.Factory):
+    class Meta:
+        model = User
+    
+    id = factory.Sequence(lambda n: n)
+    username = factory.Sequence(lambda n: f"user{n}")
+    email = factory.LazyAttribute(lambda obj: f"{obj.username}@example.com")
+    first_name = factory.Faker("first_name")
+    last_name = factory.Faker("last_name")
+    is_active = True
+    is_verified = False
+    created_at = factory.LazyFunction(lambda: datetime.now(timezone.utc))
+    
+    @factory.post_generation
+    def set_password(obj, create, extracted, **kwargs):
+        if extracted:
+            obj.password_hash = hash_password(extracted)
+```
+
+## Mock使用规范
+
+### 1. 基础Mock使用
+```python
+from unittest.mock import Mock, AsyncMock, patch, MagicMock
+
+def test_user_service_with_mock():
+    """使用Mock测试用户服务"""
+    # 创建Mock对象
+    mock_repository = Mock(spec=UserRepository)
+    mock_repository.get_by_id.return_value = User(id=1, username="test")
+    
+    # 使用Mock
+    user_service = UserService(mock_repository)
+    result = user_service.get_user(1)
+    
+    # 验证Mock调用
+    mock_repository.get_by_id.assert_called_once_with(1)
+    assert result.username == "test"
+
+@patch('src.services.user_service.EmailService')
+def test_user_registration_with_patch(mock_email_service):
+    """使用patch装饰器测试"""
+    mock_email_service.return_value.send_email.return_value = True
+    
+    user_service = UserService()
+    result = user_service.register_user(user_data)
+    
+    assert result is not None
+    mock_email_service.return_value.send_email.assert_called_once()
+```
+
+### 2. 异步Mock
+```python
+@pytest.mark.asyncio
+async def test_async_service():
+    """测试异步服务"""
+    mock_repo = Mock()
+    mock_repo.get_user = AsyncMock(return_value=User(id=1, username="test"))
+    
+    service = UserService(mock_repo)
+    result = await service.get_user_async(1)
+    
+    assert result.username == "test"
+    mock_repo.get_user.assert_called_once_with(1)
+```
+
+## 测试数据管理
+
+### 1. 测试数据隔离
+```python
+@pytest.fixture(scope="function")
+def clean_database():
+    """确保每个测试都有干净的数据库状态"""
+    # 测试前清理
+    cleanup_test_data()
+    yield
+    # 测试后清理
+    cleanup_test_data()
+
+def cleanup_test_data():
+    """清理测试数据"""
+    # 删除测试期间创建的数据
+    pass
+```
+
+### 2. 测试数据工厂
+```python
+class TestDataBuilder:
+    """测试数据构建器"""
+    
+    @staticmethod
+    def create_user(username="testuser", email="test@example.com", **kwargs):
+        """创建测试用户"""
+        defaults = {
+            "username": username,
+            "email": email,
+            "is_active": True,
+            "created_at": datetime.now()
+        }
+        defaults.update(kwargs)
+        return User(**defaults)
+    
+    @staticmethod
+    def create_users(count=5, **kwargs):
+        """批量创建测试用户"""
+        return [
+            TestDataBuilder.create_user(
+                username=f"user{i}",
+                email=f"user{i}@example.com",
+                **kwargs
+            )
+            for i in range(count)
+        ]
+```
+
+## 断言最佳实践
+
+### 1. 具体断言
+```python
+# 好的断言 - 具体明确
+def test_user_age_validation():
+    user = User(username="test", age=25)
+    assert user.age == 25
+    assert user.is_adult() is True
+
+# 避免的断言 - 过于宽泛
+def test_user_creation():
+    user = User(username="test", age=25)
+    assert user  # 太宽泛
+```
+
+### 2. 断言消息
+```python
+def test_user_validation_with_message():
+    """使用自定义断言消息"""
+    user_data = {"username": "", "email": "invalid"}
+    
+    with pytest.raises(ValidationError) as exc_info:
+        validate_user(user_data)
+    
+    error_msg = str(exc_info.value)
+    assert "username" in error_msg, f"错误消息应包含username字段信息: {error_msg}"
+    assert "email" in error_msg, f"错误消息应包含email字段信息: {error_msg}"
+```
+
+### 3. 复杂对象断言
+```python
+def test_user_response_structure():
+    """测试复杂响应结构"""
+    response = get_user_profile(user_id=1)
+    
+    # 验证响应结构
+    assert "user" in response
+    assert "profile" in response
+    assert "permissions" in response
+    
+    # 验证用户信息
+    user = response["user"]
+    assert user["id"] == 1
+    assert "password" not in user
+    
+    # 验证权限列表
+    permissions = response["permissions"]
+    assert isinstance(permissions, list)
+    assert len(permissions) > 0
+    assert all(isinstance(perm, str) for perm in permissions)
+```
+
+## 性能测试规范
+
+### 1. 基准测试
+```python
+import time
+import pytest
+
+@pytest.mark.slow
+def test_user_search_performance():
+    """测试用户搜索性能"""
+    # 准备大量测试数据
+    users = TestDataBuilder.create_users(count=1000)
+    
+    start_time = time.time()
+    result = search_users("test", users)
+    end_time = time.time()
+    
+    execution_time = end_time - start_time
+    assert execution_time < 1.0, f"搜索耗时 {execution_time:.2f}s，超过1秒阈值"
+    assert len(result) > 0
+```
+
+### 2. 内存使用测试
+```python
+import psutil
+import os
+
+def test_memory_usage():
+    """测试内存使用情况"""
+    process = psutil.Process(os.getpid())
+    initial_memory = process.memory_info().rss
+    
+    # 执行可能消耗大量内存的操作
+    large_data = process_large_dataset()
+    
+    final_memory = process.memory_info().rss
+    memory_increase = final_memory - initial_memory
+    
+    # 验证内存增长在合理范围内（例如不超过100MB）
+    assert memory_increase < 100 * 1024 * 1024, f"内存增长 {memory_increase / 1024 / 1024:.2f}MB 过多"
+```
+
+## 测试报告和覆盖率
+
+### 1. 覆盖率配置
+```ini
+# .coveragerc
+[run]
+source = src
+omit = 
+    */tests/*
+    */venv/*
+    */migrations/*
+    */settings/*
+    */__pycache__/*
+
+[report]
+exclude_lines =
+    pragma: no cover
+    def __repr__
+    raise AssertionError
+    raise NotImplementedError
+    if __name__ == .__main__.:
+
+[html]
+directory = htmlcov
+```
+
+### 2. 测试报告生成
+```bash
+# 生成HTML覆盖率报告
+pytest --cov=src --cov-report=html
+
+# 生成JUnit XML报告
+pytest --junitxml=test-results.xml
+
+# 生成HTML测试报告
+pytest --html=test-report.html --self-contained-html
+```
+
+## 持续集成配置
+
+### 1. GitHub Actions
+```yaml
+# .github/workflows/test.yml
+name: Test Suite
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: [3.8, 3.9, "3.10", "3.11"]
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install -r requirements-test.txt
+    
+    - name: Run tests
+      run: |
+        pytest tests/ -v --cov=src --cov-report=xml
+    
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml
+```
+
+## 测试命令规范
+
+### 1. 常用测试命令
+```bash
+# 运行所有测试
+pytest
+
+# 运行特定模块测试
+pytest tests/test_models.py
+
+# 运行特定测试类
+pytest tests/test_services.py::TestUserService
+
+# 运行特定测试方法
+pytest tests/test_services.py::TestUserService::test_create_user
+
+# 按标记运行测试
+pytest -m unit
+pytest -m "not slow"
+pytest -m "unit and not database"
+
+# 并行运行测试
+pytest -n auto
+
+# 只运行失败的测试
+pytest --lf
+
+# 运行直到第一个失败
+pytest -x
+
+# 详细输出
+pytest -v -s
+
+# 生成覆盖率报告
+pytest --cov=src --cov-report=term-missing
+```
+
+### 2. 调试测试
+```bash
+# 进入PDB调试器
+pytest --pdb
+
+# 在第一个失败时进入调试器
+pytest --pdb -x
+
+# 显示本地变量
+pytest -l
+
+# 显示最长的10个慢测试
+pytest --durations=10
+```
+
+## 注意事项和最佳实践
+
+### 1. 测试隔离
+- 每个测试应该独立，不依赖其他测试的结果
+- 使用适当的fixture来设置和清理测试环境
+- 避免全局状态污染测试
+
+### 2. Mock使用原则
+- 只Mock外部依赖，不Mock被测试的代码
+- 使用spec参数确保Mock对象接口正确
+- 验证Mock的调用次数和参数
+
+### 3. 测试命名
+- 测试名称应该清楚描述测试的内容和期望
+- 使用 `test_should_xxx_when_xxx` 格式
+- 包含测试场景和预期结果
+
+### 4. 测试覆盖率
+- 目标覆盖率至少80%
+- 重点关注分支覆盖率，不仅仅是行覆盖率
+- 100%覆盖率不是目标，质量比数量重要
+
+### 5. 性能考虑
+- 使用 `@pytest.mark.slow` 标记耗时测试
+- 考虑使用pytest-xdist进行并行测试
+- 大型测试套件应该分层运行
+
+
+# =====================================================
+# 总结：平衡Mock和真实测试的策略
+# =====================================================
+
+"""
+1. 单元测试 (70%) - 使用Mock
+   - 快速反馈
+   - 测试业务逻辑
+   - 隔离依赖
+   
+2. 集成测试 (20%) - 减少Mock
+   - 测试组件交互
+   - 验证数据流
+   - 发现集成问题
+   
+3. 端到端测试 (10%) - 不使用Mock
+   - 测试用户场景
+   - 验证整体功能
+   - 发现系统问题
+
+关键原则：
+- Mock外部依赖，不Mock被测代码
+- 用集成测试补充单元测试的不足
+- 用E2E测试验证真实用户场景
+- 根据测试目的选择合适的Mock程度
+"""
+
+这份规范应该根据项目实际情况进行调整和扩展。

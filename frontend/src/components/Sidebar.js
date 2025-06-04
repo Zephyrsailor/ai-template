@@ -83,6 +83,9 @@ const ConversationItem = ({ chat, isActive, onSelect, onDelete }) => {
   // 添加状态控制确认对话框
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
 
+  // 判断是否为新会话：没有serverId或者isNew为true
+  const isNewConversation = chat.isNew || !chat.serverId;
+
   return (
     <>
       <div 
@@ -101,8 +104,8 @@ const ConversationItem = ({ chat, isActive, onSelect, onDelete }) => {
           </span>
         </div>
         
-        {/* 删除按钮 */}
-        {onDelete && (
+        {/* 删除按钮 - 只有非新会话才显示 */}
+        {onDelete && !isNewConversation && (
           <button 
             className="p-1 rounded-full text-gray-400 hover:bg-gray-200 hover:text-red-500"
             onClick={(e) => {
@@ -115,20 +118,22 @@ const ConversationItem = ({ chat, isActive, onSelect, onDelete }) => {
         )}
       </div>
 
-      {/* 使用自定义确认对话框 */}
-      <ConfirmDialog
-        isOpen={showConfirmDialog}
-        onClose={() => setShowConfirmDialog(false)}
-        onConfirm={() => {
-          onDelete(chat.id);
-          setShowConfirmDialog(false);
-        }}
-        title="确认删除"
-        message={`确定要删除会话 "${chat.title || '新会话'}" 吗？`}
-        confirmText="删除"
-        cancelText="取消"
-        type="danger"
-      />
+      {/* 使用自定义确认对话框 - 只有非新会话才需要 */}
+      {!isNewConversation && (
+        <ConfirmDialog
+          isOpen={showConfirmDialog}
+          onClose={() => setShowConfirmDialog(false)}
+          onConfirm={() => {
+            onDelete(chat.id);
+            setShowConfirmDialog(false);
+          }}
+          title="确认删除"
+          message={`确定要删除会话 "${chat.title || '新会话'}" 吗？`}
+          confirmText="删除"
+          cancelText="取消"
+          type="danger"
+        />
+      )}
     </>
   );
 };

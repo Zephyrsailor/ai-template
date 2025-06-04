@@ -6,7 +6,7 @@ from typing import List, Dict, Optional, AsyncGenerator, Any, Union
 from .base import BaseProvider, MessageDict
 import asyncio
 from ...domain.models.events import ModelEvent
-from ...domain.constants import EventType
+from ...domain.constants import EventType, supports_function_calling
 
 # 初始化logger
 logger = logging.getLogger(__name__)
@@ -15,6 +15,7 @@ class OpenAIProvider(BaseProvider):
     """
     Async Provider for OpenAI and compatible APIs using the openai library.
     Focuses on core chat completion functionality.
+    支持Function Calling和文本模式的自动切换 - 单工具调用模式
     """
     def __init__(self, api_key: str, base_url: Optional[str] = None):
         if not api_key:
@@ -22,6 +23,8 @@ class OpenAIProvider(BaseProvider):
         self.api_key = api_key
         self.base_url = base_url
         self._observation_queue = asyncio.Queue()
+        # 工具名称映射：OpenAI格式 -> 原始名称
+        self._tool_name_mapping = {}
         try:
             # Use AsyncOpenAI for FastAPI integration
             self.client = AsyncOpenAI(
@@ -33,6 +36,72 @@ class OpenAIProvider(BaseProvider):
         except Exception as e:
             print(f"Error initializing AsyncOpenAI client: {e}")
             raise
+    
+    def supports_function_calling(self, model_id: str) -> bool:
+        """检查模型是否支持Function Calling"""
+        return supports_function_calling(model_id)
+    
+    def _build_react_prompt(self, system_prompt: Optional[str], tools: List[Any]) -> str:
+        """构建ReAct提示词"""
+        return super()._build_prompt(system_prompt, tools)
+    
+    def _clean_tool_name_for_openai(self, name: str) -> str:
+        """清理工具名称，使其符合OpenAI Function Calling格式要求"""
+        # 替换特殊字符为下划线
+        cleaned = re.sub(r'[^a-zA-Z0-9_-]', '_', name)
+        # 移除连续的下划线
+        cleaned = re.sub(r'_+', '_', cleaned)
+        # 移除开头和结尾的下划线
+        cleaned = cleaned.strip('_')
+        return cleaned
+    
+    def _convert_tools_to_openai_format(self, tools: List[Any]) -> List[Dict[str, Any]]:
+        """将工具转换为OpenAI Function Calling格式"""
+        openai_tools = []
+        self._tool_name_mapping.clear()  # 清空之前的映射
+        
+        for tool in tools:
+            # 兼容处理Tool对象和字典格式
+            if hasattr(tool, "name"):
+                # 处理Tool对象
+                original_name = tool.name
+                description = tool.description
+                parameters = {
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                }
+                
+                for param in tool.parameters:
+                    parameters["properties"][param.name] = {
+                        "type": param.type or "string",
+                        "description": param.description
+                    }
+                    if param.required:
+                        parameters["required"].append(param.name)
+            else:
+                # 处理字典格式
+                original_name = tool.get("name", "")
+                description = tool.get("description", "")
+                parameters = tool.get("parameters", {})
+            
+            # 清理工具名称
+            openai_name = self._clean_tool_name_for_openai(original_name)
+            
+            # 存储映射关系
+            self._tool_name_mapping[openai_name] = original_name
+            
+            openai_tool = {
+                "type": "function",
+                "function": {
+                    "name": openai_name,
+                    "description": description,
+                    "parameters": parameters
+                }
+            }
+            openai_tools.append(openai_tool)
+        
+        return openai_tools
                 
     async def completions(
         self,
@@ -47,14 +116,180 @@ class OpenAIProvider(BaseProvider):
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         执行带工具集成的对话补全。
-        使用流式API实现真正的流式体验。
-        支持工具调用和异常处理。
+        自动检测模型能力，支持Function Calling或文本模式 - 单工具调用模式
         """
+        try:
+            # 检查模型是否支持Function Calling
+            supports_fc = self.supports_function_calling(model_id)
+            
+            if supports_fc and tools:
+                # 使用Function Calling模式
+                async for event in self._completions_with_function_calling(
+                    messages, model_id, system_prompt, tools, temperature, max_tokens, stream, **kwargs
+                ):
+                    yield event
+            else:
+                # 使用文本模式（ReAct）
+                async for event in self._completions_with_text_mode(
+                    messages, model_id, system_prompt, tools, temperature, max_tokens, stream, **kwargs
+                ):
+                    yield event
+                    
+        except Exception as e:
+            error_msg = f"对话处理错误: {str(e)}"
+            print(f"致命错误: {error_msg}")
+            yield ModelEvent(EventType.CONTENT, "很抱歉，我在处理您的请求时遇到了技术困难。请尝试重新提问或简化您的问题。")
+
+    async def _completions_with_function_calling(
+        self,
+        messages: List[MessageDict],
+        model_id: str,
+        system_prompt: Optional[str] = None,
+        tools: Optional[List[Any]] = None,
+        temperature: Optional[float] = 0.7,
+        max_tokens: Optional[int] = 1024,
+        stream: bool = True,
+        **kwargs: Any
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """使用OpenAI Function Calling模式 - 单工具调用模式"""
+        try:
+            # 准备消息
+            conversation_messages = self._prepare_messages(messages, system_prompt)
+            
+            # 转换工具为OpenAI格式
+            openai_tools = self._convert_tools_to_openai_format(tools) if tools else None
+            
+            # 检查是否有有效消息
+            if len(conversation_messages) <= (1 if system_prompt else 0):
+                error_msg = "没有有效的用户/助手消息可发送"
+                print(f"错误: {error_msg}")
+                yield ModelEvent(EventType.ERROR, {"error": error_msg})
+                return
+            
+            # 构建请求参数
+            request_params = {
+                "model": model_id,
+                "messages": conversation_messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "stream": stream,
+                **kwargs
+            }
+            
+            # 添加工具参数
+            if openai_tools:
+                request_params["tools"] = openai_tools
+                request_params["tool_choice"] = "auto"  # 让模型自动决定是否使用工具
+            
+            full_response = ""
+            tool_calls = []
+            model_response_error = False
+
+            try:
+                response_stream = await self.client.chat.completions.create(**request_params)
+                
+                async for chunk in response_stream:
+                    if not chunk.choices:
+                        continue
+                        
+                    delta = chunk.choices[0].delta
+                    
+                    # 处理思考内容（如果有）
+                    reasoning_chunk = getattr(delta, 'reasoning_content', getattr(delta, 'thinking', None))
+                    if reasoning_chunk:
+                        yield ModelEvent(EventType.THINKING, reasoning_chunk)
+                    
+                    # 处理常规内容
+                    if delta.content:
+                        full_response += delta.content
+                        yield ModelEvent(EventType.CONTENT, delta.content)
+                    
+                    # 处理工具调用
+                    if delta.tool_calls:
+                        for tool_call in delta.tool_calls:
+                            # 确保tool_calls列表足够长
+                            while len(tool_calls) <= tool_call.index:
+                                tool_calls.append({
+                                    "id": "",
+                                    "type": "function",
+                                    "function": {"name": "", "arguments": ""}
+                                })
+                            
+                            # 更新工具调用信息
+                            if tool_call.id:
+                                tool_calls[tool_call.index]["id"] = tool_call.id
+                            if tool_call.type:
+                                tool_calls[tool_call.index]["type"] = tool_call.type
+                            if tool_call.function:
+                                if tool_call.function.name:
+                                    tool_calls[tool_call.index]["function"]["name"] = tool_call.function.name
+                                if tool_call.function.arguments:
+                                    tool_calls[tool_call.index]["function"]["arguments"] += tool_call.function.arguments
+                
+            except (APITimeoutError, RateLimitError, APIError) as api_error:
+                error_msg = f"API 错误: {str(api_error)}"
+                yield ModelEvent(EventType.ERROR, {"error": error_msg})
+                print(f"API错误: {error_msg}")
+                model_response_error = True
+                
+            except Exception as e:
+                error_msg = f"流处理错误: {str(e)}"
+                yield ModelEvent(EventType.ERROR, {"error": error_msg})
+                print(f"流处理错误: {error_msg}")
+                model_response_error = True
+            
+            # 如果发生错误，退出
+            if model_response_error:
+                return
+            
+            # 处理工具调用（单工具调用模式）
+            if tool_calls:
+                # 只处理第一个工具调用
+                tool_call = tool_calls[0]
+                try:
+                    openai_function_name = tool_call["function"]["name"]
+                    function_args = json.loads(tool_call["function"]["arguments"])
+                    
+                    # 将OpenAI格式的工具名转换回原始名称
+                    original_tool_name = self._tool_name_mapping.get(openai_function_name, openai_function_name)
+                    
+                    # 转换为统一格式
+                    tool_call_data = {
+                        "tool_name": original_tool_name,
+                        "arguments": function_args
+                    }
+                    
+                    yield ModelEvent(EventType.TOOL_CALL, json.dumps(tool_call_data))
+                    
+                except json.JSONDecodeError as e:
+                    error_msg = f"工具调用参数解析失败: {str(e)}"
+                    yield ModelEvent(EventType.ERROR, {"error": error_msg})
+                except Exception as e:
+                    error_msg = f"工具调用处理失败: {str(e)}"
+                    yield ModelEvent(EventType.ERROR, {"error": error_msg})
+                    
+        except Exception as e:
+            error_msg = f"Function Calling模式错误: {str(e)}"
+            print(f"Function Calling错误: {error_msg}")
+            yield ModelEvent(EventType.ERROR, {"error": error_msg})
+
+    async def _completions_with_text_mode(
+        self,
+        messages: List[MessageDict],
+        model_id: str,
+        system_prompt: Optional[str] = None,
+        tools: Optional[List[Any]] = None,
+        temperature: Optional[float] = 0.7,
+        max_tokens: Optional[int] = 1024,
+        stream: bool = True,
+        **kwargs: Any
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """使用文本模式（ReAct提示词） - 单工具调用模式"""
         try:
             # 构建system_prompt，优先使用tools构建prompt
             prompt = None
             if tools:
-                prompt = self._build_prompt(system_prompt, tools)
+                prompt = self._build_react_prompt(system_prompt, tools)
             else:
                 prompt = system_prompt
 
@@ -94,8 +329,8 @@ class OpenAIProvider(BaseProvider):
                     if content_chunk:
                         full_response += content_chunk
                         
-                        # 检测是否包含工具调用
-                        if "```" in full_response and not has_tool_call:
+                        # 检测是否包含工具调用（单工具调用模式）
+                        if "```json" in full_response and "{" in full_response and not has_tool_call:
                             has_tool_call = True
                         
                         # 如果没有工具调用，直接输出内容
@@ -120,14 +355,14 @@ class OpenAIProvider(BaseProvider):
                         
             # 处理工具调用(如果有)
             if has_tool_call:
-                tool_call_json = self._parse_tool_call(full_response)
-                if tool_call_json:
-                    yield ModelEvent(EventType.TOOL_CALL, tool_call_json)
+                tool_call_data = self._parse_tool_call(full_response)
+                if tool_call_data:
+                    yield ModelEvent(EventType.TOOL_CALL, json.dumps(tool_call_data))
                 
         except Exception as e:
-            error_msg = f"对话处理错误: {str(e)}"
-            print(f"致命错误: {error_msg}")
-            yield ModelEvent(EventType.CONTENT, "很抱歉，我在处理您的请求时遇到了技术困难。请尝试重新提问或简化您的问题。")
+            error_msg = f"文本模式错误: {str(e)}"
+            print(f"文本模式错误: {error_msg}")
+            yield ModelEvent(EventType.ERROR, {"error": error_msg})
 
     def _prepare_messages(self, messages: List[MessageDict], system_prompt: Optional[str]) -> List[Dict[str, str]]:
         """
@@ -162,167 +397,45 @@ class OpenAIProvider(BaseProvider):
                 
         return request_messages
     
-    async def _execute_tool_calls(self, tool_call_json: str) -> List[ModelEvent]:
-        """执行工具调用并返回结果事件"""
-        results = []
-        
-        try:
-            # 解析工具调用JSON
-            tool_calls = json.loads(tool_call_json)
-            
-            # 标准化工具调用格式
-            normalized_tool_calls = self._normalize_tool_calls(tool_calls)
-            
-            if not normalized_tool_calls:
-                results.append(ModelEvent(EventType.ERROR, {"error": "工具调用JSON格式不正确"}))
-                return results
-            
-            # 准备工具调用任务
-            from ...services.mcp import MCPService
-            mcp_service = MCPService()
-            await mcp_service._ensure_initialized()
-            
-            # 创建工具调用任务列表
-            tool_tasks = []
-            for tool_call in normalized_tool_calls:
-                action_name = tool_call.get("tool_name")
-                action_input = tool_call.get("arguments", {})
-                
-                if not action_name:
-                    continue
-                
-                # 创建任务
-                task = asyncio.create_task(
-                    self._safe_call_tool(mcp_service, action_name, action_input)
-                )
-                tool_tasks.append((task, action_name, action_input))
-            
-            # 执行所有工具调用
-            for task, action_name, action_input in tool_tasks:
-                try:
-                    result = await task
-                    
-                    # 序列化结果
-                    json_result = self._serialize_call_tool_result(result)
-                    
-                    # 创建工具调用事件
-                    tool_data = {
-                        "name": action_name,
-                        "arguments": action_input,
-                        "result": json_result
-                    }
-                    
-                    # 添加错误信息(如果有)
-                    if isinstance(result, dict) and "error" in result:
-                        tool_data["error"] = result["error"]
-                    elif hasattr(result, "isError") and result.isError and hasattr(result, "message"):
-                        tool_data["error"] = result.message
-                    
-                    # 添加工具调用事件
-                    results.append(ModelEvent(EventType.TOOL_CALL, tool_data))
-                    
-                except Exception as e:
-                    error_msg = f"工具 '{action_name}' 执行错误: {str(e)}"
-                    results.append(ModelEvent(EventType.ERROR, {"error": error_msg}))
-            
-        except json.JSONDecodeError:
-            error_msg = f"工具调用JSON解析失败: {tool_call_json}"
-            results.append(ModelEvent(EventType.ERROR, {"error": error_msg}))
-        
-        return results
-    
-    def _normalize_tool_calls(self, tool_calls: Union[Dict, List]) -> List[Dict]:
-        """标准化工具调用格式"""
-        normalized_calls = []
-        
-        # 处理列表情况
-        if isinstance(tool_calls, list):
-            for item in tool_calls:
-                if isinstance(item, dict) and item.get("tool_name"):
-                    normalized_calls.append({
-                        "tool_name": item.get("tool_name"),
-                        "arguments": item.get("arguments", {})
-                    })
-        # 处理单个工具调用情况
-        elif isinstance(tool_calls, dict) and tool_calls.get("tool_name"):
-            normalized_calls.append({
-                "tool_name": tool_calls.get("tool_name"),
-                "arguments": tool_calls.get("arguments", {})
-            })
-            
-        return normalized_calls
-    
-    def _build_observation_message(self, tool_results: List[ModelEvent]) -> str:
-        """从工具调用结果构建观察消息"""
-        observations = []
-        
-        for event in tool_results:
-            if event.type == EventType.TOOL_CALL:
-                tool_name = event.data.get("name", "unknown_tool")
-                result = event.data.get("result", {})
-                
-                # 提取文本内容
-                observation_text = ""
-                if isinstance(result, dict):
-                    content = result.get("content", [])
-                    if isinstance(content, list):
-                        text_parts = []
-                        for item in content:
-                            if isinstance(item, dict) and item.get("type") == "text":
-                                text_parts.append(item.get("text", ""))
-                        observation_text = "\n".join(text_parts)
-                    else:
-                        observation_text = str(content)
-                else:
-                    observation_text = str(result)
-                
-                observations.append(f"Observation for {tool_name}: {observation_text}")
-            
-            elif event.type == EventType.ERROR:
-                error_msg = event.data.get("error", "Unknown error")
-                observations.append(f"Error: {error_msg}")
-        
-        return "\n\n".join(observations)
-    
-    def _parse_tool_call(self, response: str) -> str:
+    def _parse_tool_call(self, response: str) -> Dict[str, Any]:
         """
-        解析响应中的工具调用JSON字符串
+        解析响应中的工具调用JSON - 单工具调用模式
         
         Args:
             response: 模型的响应文本
             
         Returns:
-            工具调用的JSON字符串，如果没有找到则返回空字符串
+            工具调用的字典，如果没有找到则返回None
         """
-        tool_match = re.search(r"```json\n(.*?)\n```", response, re.DOTALL)
+        # 查找JSON代码块
+        tool_match = re.search(r"```json\s*\n(.*?)\n```", response, re.DOTALL)
         if not tool_match:
-            return ""
+            return None
         
-        return tool_match.group(1).strip()
-
-    async def _safe_call_tool(self, mcp_service, tool_name: str, arguments: Dict[str, Any]) -> Any:
-        """安全地调用工具，处理异常"""
         try:
-            result = await mcp_service.call_tool(tool_name, arguments)
-            return result
-        except Exception as e:
-            error_msg = f"工具调用失败 ({tool_name}): {str(e)}"
-            print(f"工具调用错误: {error_msg}")
-            return ModelEvent(EventType.ERROR, {"error": error_msg})
+            json_str = tool_match.group(1).strip()
+            tool_call = json.loads(json_str)
+            
+            # 验证工具调用格式
+            if isinstance(tool_call, dict) and "tool_name" in tool_call:
+                return {
+                    "tool_name": tool_call.get("tool_name"),
+                    "arguments": tool_call.get("arguments", {})
+                }
+            else:
+                print(f"工具调用格式不正确: {json_str}")
+                return None
+                
+        except json.JSONDecodeError as e:
+            print(f"工具调用JSON解析失败: {e}")
+            return None
     
-    def _serialize_call_tool_result(self, result: Any) -> Dict[str, Any]:
-        """序列化工具调用结果"""
-        if isinstance(result, ModelEvent):
-            return {
-                "type": result.type,
-                "data": result.data
-            }
-        elif isinstance(result, dict):
-            return result
-        elif isinstance(result, (list, str, int, float, bool)):
-            return {"result": result}
-        else:
-            return {"result": str(result)}
+    def _build_prompt(self, system_prompt: Optional[str], tools: List[Any]) -> str:
+        """构建系统提示词"""
+        prompt = system_prompt or ""
+        if tools:
+            prompt += "\n\n" + "\n".join([f"{tool.name}: {tool.description}" for tool in tools])
+        return prompt
 
     async def list_models(self) -> List[str]:
         """

@@ -3,10 +3,12 @@
 """
 import os
 from functools import lru_cache
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 import logging
+import numpy as np
 
 from pydantic_settings import BaseSettings
+from llama_index.core.embeddings import BaseEmbedding
 
 # 设置日志记录器
 logger = logging.getLogger(__name__)
@@ -16,6 +18,43 @@ class Settings(BaseSettings):
     # 应用设置
     APP_NAME: str = "AI助手"
     APP_DESCRIPTION: str = "基于大语言模型的AI助手"
+    ENVIRONMENT: str = "development"  # development, production, testing
+    DEBUG: bool = True
+    
+    # 日志配置
+    LOG_LEVEL: str = "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+    
+    # 数据存储配置 - 统一数据目录
+    DATA_DIR: str = "data"  # 主数据目录
+    USERS_DATA_DIR: str = "data/users"  # 用户数据目录
+    KB_DATA_DIR: str = "data/knowledge_bases"  # 知识库数据目录
+    CONVERSATIONS_DATA_DIR: str = "data/conversations"  # 会话数据目录
+    
+    # 数据库配置
+    DATABASE_TYPE: str = "mysql"  # 支持 mysql, postgresql, sqlite
+    DATABASE_HOST: str = "localhost"
+    DATABASE_PORT: int = 3306
+    DATABASE_NAME: str = "ai_template"
+    DATABASE_USER: str = "root"
+    DATABASE_PASSWORD: str = ""
+    DATABASE_ECHO: bool = False  # 是否打印SQL语句
+    
+    # 数据库连接池配置
+    DB_POOL_SIZE: int = 10  # 连接池大小
+    DB_MAX_OVERFLOW: int = 20  # 最大溢出连接数
+    DB_POOL_TIMEOUT: int = 120  # 连接池超时时间（秒）
+    DB_POOL_RECYCLE: int = 1800  # 连接回收时间（秒）
+    DB_LOCK_TIMEOUT: int = 60  # MySQL锁等待超时时间（秒）
+    
+    # MySQL配置（当DATABASE_TYPE=mysql时使用）
+    MYSQL_HOST: str = "localhost"
+    MYSQL_PORT: int = 3306
+    MYSQL_USER: str = "root"
+    MYSQL_PASSWORD: str = "password"
+    MYSQL_DATABASE: str = "ai_template"
+    
+    # SQLite配置（当DATABASE_TYPE=sqlite时使用）
+    SQLITE_PATH: str = "data/ai_template.db"
     
     # API密钥
     OPENAI_API_KEY: Optional[str] = None
@@ -26,11 +65,11 @@ class Settings(BaseSettings):
     
     # LLM配置
     LLM_PROVIDER: str = "ollama"  # 可选值: "openai", "anthropic", "azure", "ollama", "local", "deepseek", "gemini"
-    LLM_MODEL_NAME: str = "llama2"  # 默认模型名称
+    LLM_MODEL_NAME: str = "llama3.2:3b"  # 默认模型名称，使用更常见的模型
     
     # 嵌入模型配置
     EMBEDDING_PROVIDER: str = "ollama"  # 可选值: "openai", "huggingface", "ollama", "local", "deepseek", "gemini"
-    EMBEDDING_MODEL_NAME: str = "nomic-embed-text"  # 默认嵌入模型
+    EMBEDDING_MODEL_NAME: str = "bge-large"  # 默认嵌入模型，BGE-large在中文场景下效果更好
     
     # 第三方服务配置
     OLLAMA_BASE_URL: str = "http://localhost:11434"
@@ -43,9 +82,6 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7  # 7天
 
-    # 用户数据存储目录
-    USERS_DATA_DIR: str = "data/users"
-
     # 网络搜索配置
     GOOGLE_API_KEY: Optional[str] = None
     GOOGLE_CSE_ID: Optional[str] = None
@@ -56,6 +92,29 @@ class Settings(BaseSettings):
         env_file_encoding = "utf-8"
         case_sensitive = True
         extra = "ignore"  # 允许额外字段，避免验证错误
+
+    def get_database_url(self) -> str:
+        """根据配置生成数据库URL"""
+        db_type = self.DATABASE_TYPE.lower()
+        
+        if db_type == "postgresql":
+            # 如果已经设置了完整的DATABASE_URL，直接使用
+            if "postgresql" in self.DATABASE_URL:
+                return self.DATABASE_URL
+            # 否则使用默认的PostgreSQL配置
+            return "postgresql+asyncpg://postgres:password@localhost:5432/ai_template"
+            
+        elif db_type == "mysql":
+            return f"mysql+aiomysql://{self.MYSQL_USER}:{self.MYSQL_PASSWORD}@{self.MYSQL_HOST}:{self.MYSQL_PORT}/{self.MYSQL_DATABASE}"
+            
+        elif db_type == "sqlite":
+            # 确保目录存在
+            import os
+            os.makedirs(os.path.dirname(self.SQLITE_PATH), exist_ok=True)
+            return f"sqlite+aiosqlite:///{self.SQLITE_PATH}"
+            
+        else:
+            raise ValueError(f"不支持的数据库类型: {db_type}")
 
     def get_llm_params(self) -> Dict[str, Any]:
         """获取LLM模型的参数，基于当前配置"""
@@ -184,6 +243,15 @@ def get_embedding_model():
         logger.error(f"加载嵌入模型失败: {str(e)}，回退到本地模型")
         from llama_index.core.embeddings import resolve_embed_model
         return resolve_embed_model("local")
+
+def normalize_embedding(embedding: List[float]) -> List[float]:
+    """归一化向量的工具函数"""
+    embedding_array = np.array(embedding)
+    norm = np.linalg.norm(embedding_array)
+    if norm > 0:
+        normalized = embedding_array / norm
+        return normalized.tolist()
+    return embedding
 
 @lru_cache()
 def get_llm_model():

@@ -14,22 +14,24 @@ const SelectorButton = styled.button`
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 12px;
+  padding: 10px 14px;
   border: 1px solid #e5e7eb;
-  border-radius: 8px;
+  border-radius: 10px;
   background: white;
   color: #374151;
   font-size: 14px;
   font-weight: 500;
   cursor: pointer;
   transition: all 0.2s ease;
-  min-width: 180px;
+  min-width: 200px;
   justify-content: space-between;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
   
   &:hover {
-    border-color: #d1d5db;
-    background: #f9fafb;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+    border-color: #6366f1;
+    background: #f8faff;
+    box-shadow: 0 4px 12px rgba(99, 102, 241, 0.15);
+    transform: translateY(-1px);
   }
   
   &:focus {
@@ -37,19 +39,24 @@ const SelectorButton = styled.button`
     border-color: #6366f1;
     box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
   }
+  
+  &:active {
+    transform: translateY(0);
+  }
 `;
 
 const ModelIcon = styled.div`
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
-  border-radius: 4px;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
   background: ${props => props.color || '#f3f4f6'};
   color: white;
-  font-size: 12px;
-  font-weight: 600;
+  font-size: 11px;
+  font-weight: 700;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 `;
 
 const ModelInfo = styled.div`
@@ -80,12 +87,13 @@ const DropdownMenu = styled.div`
   margin-top: 8px;
   background: white;
   border: 1px solid #e5e7eb;
-  border-radius: 12px;
-  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+  border-radius: 16px;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
   z-index: 1000;
   max-height: 500px;
   overflow: hidden;
   display: ${props => props.isOpen ? 'block' : 'none'};
+  backdrop-filter: blur(8px);
 `;
 
 const SearchContainer = styled.div`
@@ -99,11 +107,12 @@ const SearchContainer = styled.div`
 
 const SearchInput = styled.input`
   width: 100%;
-  padding: 8px 12px 8px 36px;
+  padding: 10px 14px 10px 40px;
   border: 1px solid #e5e7eb;
-  border-radius: 8px;
+  border-radius: 10px;
   font-size: 14px;
   background: #f9fafb;
+  transition: all 0.2s ease;
   
   &:focus {
     outline: none;
@@ -132,17 +141,18 @@ const RefreshButton = styled.button`
   right: 24px;
   top: 50%;
   transform: translateY(-50%);
-  padding: 4px;
+  padding: 6px;
   border: none;
   background: none;
   color: #6b7280;
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: 6px;
   transition: all 0.2s ease;
   
   &:hover {
     background: #f3f4f6;
     color: #374151;
+    transform: translateY(-50%) scale(1.1);
   }
   
   &:disabled {
@@ -165,12 +175,15 @@ const ProviderSection = styled.div`
 `;
 
 const ProviderHeader = styled.div`
-  padding: 12px 16px 8px;
-  background: #f9fafb;
+  padding: 16px 16px 12px;
+  background: linear-gradient(135deg, #f8faff 0%, #f1f5f9 100%);
   border-bottom: 1px solid #f3f4f6;
   display: flex;
   align-items: center;
   justify-content: space-between;
+  position: sticky;
+  top: 0;
+  z-index: 10;
 `;
 
 const ProviderTitle = styled.div`
@@ -318,6 +331,7 @@ const EnhancedLLMSelector = ({ selectedModel, onModelChange }) => {
   const [userConfigs, setUserConfigs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [hasAutoSelected, setHasAutoSelected] = useState(false);
   const containerRef = useRef(null);
 
   useEffect(() => {
@@ -349,8 +363,31 @@ const EnhancedLLMSelector = ({ selectedModel, onModelChange }) => {
         fetchUserLLMConfigs()
       ]);
       
-      setAvailableModels(modelsData);
+      console.log('EnhancedLLMSelector - 加载数据:', { modelsData, configsData });
+      
+      // 只显示用户已配置的提供商的模型
+      const configuredProviders = new Set(configsData.map(config => config.provider));
+      const filteredModelsData = modelsData.filter(providerData => 
+        configuredProviders.has(providerData.provider)
+      );
+      
+      setAvailableModels(filteredModelsData);
       setUserConfigs(configsData);
+      
+      // 自动选择默认模型
+      if (!selectedModel && !hasAutoSelected && onModelChange && configsData.length > 0) {
+        const defaultConfig = configsData.find(config => config.is_default);
+        if (defaultConfig) {
+          console.log('自动选择默认配置模型:', defaultConfig.model_name);
+          onModelChange(defaultConfig.model_name);
+          setHasAutoSelected(true);
+        } else if (configsData.length > 0) {
+          // 如果没有默认配置但有用户配置，选择第一个
+          console.log('自动选择第一个用户配置模型:', configsData[0].model_name);
+          onModelChange(configsData[0].model_name);
+          setHasAutoSelected(true);
+        }
+      }
     } catch (error) {
       console.error('加载数据失败:', error);
       setAvailableModels([]);
@@ -544,16 +581,6 @@ const EnhancedLLMSelector = ({ selectedModel, onModelChange }) => {
                     <ProviderTitle>
                       {providerData.provider_label}
                       <ModelCount>{providerData.models.length}</ModelCount>
-                      {!providerData.is_configured && (
-                        <span style={{ 
-                          fontSize: '10px', 
-                          color: '#9ca3af', 
-                          marginLeft: '4px',
-                          fontWeight: 'normal'
-                        }}>
-                          (未配置)
-                        </span>
-                      )}
                     </ProviderTitle>
                     <div style={{ display: 'flex', gap: '4px' }}>
                       {providerData.is_dynamic && (

@@ -1,30 +1,454 @@
 """
-用户LLM配置API路由
+用户LLM配置API路由 - 数据库版本
 """
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, Query, Path, Body
+from pydantic import BaseModel, Field
 
 from ...domain.models.user import User
-from ...domain.models.user_llm_config import UserLLMConfig, LLMProvider
+from ...domain.models.user_llm_config import (
+    UserLLMConfigCreate, UserLLMConfigUpdate, UserLLMConfigResponse, LLMProvider
+)
+from ...domain.schemas.base import ApiResponse
 from ...services.user_llm_config import UserLLMConfigService
-from ..deps import get_current_user
+from ...core.errors import NotFoundException, ConflictException, ValidationException
+from ..deps import get_user_llm_config_service, api_response, get_current_user
+from ...core.logging import get_logger
 
 router = APIRouter(prefix="/api/user/llm-config", tags=["user-llm-config"])
+logger = get_logger(__name__)
 
-class LLMConfigRequest(BaseModel):
-    """LLM配置请求模型"""
-    provider: LLMProvider
-    model_name: str
-    api_key: Optional[str] = None
-    base_url: Optional[str] = None
-    temperature: float = 0.7
-    max_tokens: int = 1024
-    is_default: bool = False
-    config_name: str = "默认配置"
+# === 响应模型定义 ===
 
-class LLMConfigResponse(BaseModel):
-    """LLM配置响应模型"""
+class ConfigListResponse(ApiResponse[List[UserLLMConfigResponse]]):
+    """配置列表响应"""
+    pass
+
+class ConfigDetailResponse(ApiResponse[UserLLMConfigResponse]):
+    """配置详情响应"""
+    pass
+
+class ConfigStatsResponse(ApiResponse[dict]):
+    """配置统计响应"""
+    pass
+
+class ProvidersResponse(ApiResponse[List[str]]):
+    """提供商列表响应"""
+    pass
+
+class ModelsResponse(ApiResponse[List[str]]):
+    """模型列表响应"""
+    pass
+
+class ProviderInfo(BaseModel):
+    """提供商信息"""
+    value: Optional[str] = Field(None, description="提供商值")
+    label: Optional[str] = Field(None, description="提供商显示名称")
+    provider: Optional[str] = Field(None, description="提供商名称（别名）")
+    provider_label: Optional[str] = Field(None, description="提供商显示名称（别名）")
+    models: List[str] = Field(default_factory=list, description="支持的模型列表")
+    requires_api_key: bool = Field(default=True, description="是否需要API密钥")
+    default_base_url: Optional[str] = Field(default=None, description="默认基础URL")
+    supports_custom_models: bool = Field(default=False, description="是否支持自定义模型")
+    supports_dynamic_models: bool = Field(default=False, description="是否支持动态模型加载")
+    is_dynamic: bool = Field(default=False, description="是否动态加载")
+    base_url: Optional[str] = Field(default=None, description="基础URL")
+    is_configured: bool = Field(default=False, description="是否已配置")
+    
+    def __init__(self, **data):
+        super().__init__(**data)
+        # 自动设置别名字段
+        if self.provider and not self.value:
+            self.value = self.provider
+        if self.provider_label and not self.label:
+            self.label = self.provider_label
+        if self.value and not self.provider:
+            self.provider = self.value
+        if self.label and not self.provider_label:
+            self.provider_label = self.label
+
+class ProvidersInfoResponse(ApiResponse[List[ProviderInfo]]):
+    """提供商信息列表响应"""
+    pass
+
+class ProviderModels(BaseModel):
+    """提供商模型信息"""
+    provider: str = Field(..., description="提供商名称")
+    provider_label: str = Field(..., description="提供商显示名称")
+    models: List[str] = Field(default_factory=list, description="可用模型列表")
+    has_user_config: bool = Field(default=False, description="用户是否有此提供商的配置")
+
+class AvailableModelsResponse(ApiResponse[List[ProviderModels]]):
+    """可用模型列表响应"""
+    pass
+
+# === 配置管理API ===
+
+@router.post("/", response_model=ConfigDetailResponse, status_code=201)
+async def create_llm_config(
+    config_data: UserLLMConfigCreate,
+    current_user: User = Depends(get_current_user),
+    service: UserLLMConfigService = Depends(get_user_llm_config_service)
+):
+    """创建用户LLM配置"""
+    try:
+        config = await service.create_config(current_user.id, config_data)
+        return api_response(data=config, message="LLM配置创建成功")
+    except ConflictException as e:
+        return api_response(code=409, message=str(e))
+    except ValidationException as e:
+        return api_response(code=400, message=str(e))
+    except Exception as e:
+        return api_response(code=500, message=f"创建LLM配置失败: {str(e)}")
+
+@router.get("/", response_model=ConfigListResponse)
+async def list_llm_configs(
+    current_user: User = Depends(get_current_user),
+    service: UserLLMConfigService = Depends(get_user_llm_config_service)
+):
+    """获取用户所有LLM配置"""
+    try:
+        configs = await service.list_configs(current_user.id)
+        return api_response(data=configs)
+    except Exception as e:
+        return api_response(code=500, message=f"获取配置列表失败: {str(e)}")
+
+@router.get("/default", response_model=ConfigDetailResponse)
+async def get_default_llm_config(
+    current_user: User = Depends(get_current_user),
+    service: UserLLMConfigService = Depends(get_user_llm_config_service)
+):
+    """获取用户默认LLM配置"""
+    try:
+        config = await service.get_default_config(current_user.id)
+        if not config:
+            return api_response(code=404, message="未找到默认配置")
+        return api_response(data=config)
+    except Exception as e:
+        return api_response(code=500, message=f"获取默认配置失败: {str(e)}")
+
+@router.get("/providers")
+async def get_llm_providers():
+    """获取LLM提供商列表（前端兼容格式）- 不需要认证的基础信息"""
+
+    # 临时返回前端期望的格式，包含value和label字段
+    providers_info = [
+        {
+            "value": "openai",
+            "label": "OpenAI",
+            "models": [
+                "gpt-4o",
+                "gpt-4o-mini",
+                "gpt-4-turbo",
+                "gpt-4",
+                "gpt-3.5-turbo",
+                "o1-preview",
+                "o1-mini"
+            ],
+            "requires_api_key": True,
+            "supports_custom_models": True,
+            "supports_dynamic_models": False,
+            "default_base_url": None
+        },
+        {
+            "value": "deepseek",
+            "label": "DeepSeek",
+            "models": [
+                "deepseek-chat",
+                "deepseek-coder",
+                "deepseek-reasoner",
+                "deepseek-r1",
+                "deepseek-r1-lite-preview"
+            ],
+            "requires_api_key": True,
+            "supports_custom_models": True,
+            "supports_dynamic_models": False,
+            "default_base_url": None
+        },
+        {
+            "value": "gemini",
+            "label": "Google Gemini",
+            "models": [
+                "gemini-2.0-flash-exp",
+                "gemini-1.5-pro",
+                "gemini-1.5-flash",
+                "gemini-1.5-flash-8b"
+            ],
+            "requires_api_key": True,
+            "supports_custom_models": False,
+            "supports_dynamic_models": False,
+            "default_base_url": None
+        },
+        {
+            "value": "anthropic",
+            "label": "Anthropic",
+            "models": [
+                "claude-3-5-sonnet-20241022",
+                "claude-3-5-sonnet-20240620",
+                "claude-3-5-haiku-20241022",
+                "claude-3-opus-20240229"
+            ],
+            "requires_api_key": True,
+            "supports_custom_models": False,
+            "supports_dynamic_models": False,
+            "default_base_url": None
+        },
+        {
+            "value": "azure",
+            "label": "Azure OpenAI",
+            "models": [
+                "gpt-4",
+                "gpt-4-32k",
+                "gpt-4-turbo",
+                "gpt-4o",
+                "gpt-35-turbo",
+                "gpt-35-turbo-16k"
+            ],
+            "requires_api_key": True,
+            "supports_custom_models": True,
+            "supports_dynamic_models": False,
+            "default_base_url": None
+        },
+        {
+            "value": "ollama",
+            "label": "Ollama",
+            "models": [
+                "llama3.2:latest", "llama3.2:3b", "llama3.2:1b",
+                "llama3.1:latest", "llama3.1:8b", "llama3.1:70b",
+                "qwen2.5:latest", "qwen2.5:7b", "qwen2.5:14b", "qwen2.5:32b",
+                "deepseek-r1:1.5b", "deepseek-r1:7b", "deepseek-r1:8b", "deepseek-r1:14b", "deepseek-r1:32b",
+                "mistral:latest", "mistral:7b",
+                "phi3:latest", "phi3:mini", "phi3:medium",
+                "codellama:latest", "codellama:7b", "codellama:13b",
+                "gemma2:latest", "gemma2:2b", "gemma2:9b", "gemma2:27b"
+            ],
+            "requires_api_key": False,
+            "supports_custom_models": True,
+            "supports_dynamic_models": True,
+            "default_base_url": "http://localhost:11434"
+        }
+    ]
+    try:
+        return {"success": True, "code": 200, "message": "success", "data": providers_info}
+    except Exception as e:
+        return {"success": False, "code": 500, "message": f"获取提供商列表失败: {str(e)}", "data": []}
+
+@router.get("/{config_id}", response_model=ConfigDetailResponse)
+async def get_llm_config(
+    config_id: str = Path(..., description="配置ID"),
+    current_user: User = Depends(get_current_user),
+    service: UserLLMConfigService = Depends(get_user_llm_config_service)
+):
+    """获取用户LLM配置详情"""
+    try:
+        config = await service.get_config(config_id, current_user.id)
+        return api_response(data=config)
+    except NotFoundException as e:
+        return api_response(code=404, message=str(e))
+    except Exception as e:
+        return api_response(code=500, message=f"获取配置详情失败: {str(e)}")
+
+@router.put("/{config_id}", response_model=ConfigDetailResponse)
+async def update_llm_config(
+    config_id: str = Path(..., description="配置ID"),
+    update_data: UserLLMConfigUpdate = Body(...),
+    current_user: User = Depends(get_current_user),
+    service: UserLLMConfigService = Depends(get_user_llm_config_service)
+):
+    """更新用户LLM配置"""
+    try:
+        config = await service.update_config(config_id, current_user.id, update_data)
+        return api_response(data=config, message="LLM配置更新成功")
+    except NotFoundException as e:
+        return api_response(code=404, message=str(e))
+    except ConflictException as e:
+        return api_response(code=409, message=str(e))
+    except ValidationException as e:
+        return api_response(code=400, message=str(e))
+    except Exception as e:
+        return api_response(code=500, message=f"更新LLM配置失败: {str(e)}")
+
+@router.delete("/{config_id}")
+async def delete_llm_config(
+    config_id: str = Path(..., description="配置ID"),
+    current_user: User = Depends(get_current_user),
+    service: UserLLMConfigService = Depends(get_user_llm_config_service)
+):
+    """删除用户LLM配置"""
+    try:
+        success = await service.delete_config(config_id, current_user.id)
+        if success:
+            return api_response(message="LLM配置删除成功")
+        else:
+            return api_response(code=500, message="删除LLM配置失败")
+    except NotFoundException as e:
+        return api_response(code=404, message=str(e))
+    except Exception as e:
+        return api_response(code=500, message=f"删除LLM配置失败: {str(e)}")
+
+# === 默认配置管理API ===
+
+@router.post("/{config_id}/set-default")
+async def set_default_config(
+    config_id: str = Path(..., description="配置ID"),
+    current_user: User = Depends(get_current_user),
+    service: UserLLMConfigService = Depends(get_user_llm_config_service)
+):
+    """设置默认配置"""
+    try:
+        success = await service.set_default_config(config_id, current_user.id)
+        if success:
+            return api_response(message="默认配置设置成功")
+        else:
+            return api_response(code=500, message="设置默认配置失败")
+    except NotFoundException as e:
+        return api_response(code=404, message=str(e))
+    except Exception as e:
+        return api_response(code=500, message=f"设置默认配置失败: {str(e)}")
+
+# === 查询API ===
+
+@router.get("/provider/{provider}", response_model=ConfigListResponse)
+async def get_configs_by_provider(
+    provider: str = Path(..., description="提供商名称"),
+    current_user: User = Depends(get_current_user),
+    service: UserLLMConfigService = Depends(get_user_llm_config_service)
+):
+    """根据提供商获取配置列表"""
+    try:
+        configs = await service.find_by_provider(current_user.id, provider)
+        return api_response(data=configs)
+    except Exception as e:
+        return api_response(code=500, message=f"获取配置列表失败: {str(e)}")
+
+@router.get("/stats/user", response_model=ConfigStatsResponse)
+async def get_user_config_stats(
+    current_user: User = Depends(get_current_user),
+    service: UserLLMConfigService = Depends(get_user_llm_config_service)
+):
+    """获取用户配置统计信息"""
+    try:
+        stats = await service.get_user_stats(current_user.id)
+        return api_response(data=stats)
+    except Exception as e:
+        return api_response(code=500, message=f"获取统计信息失败: {str(e)}")
+
+# === 工具API ===
+
+@router.get("/providers/available", response_model=ProvidersResponse)
+async def get_available_providers(
+    service: UserLLMConfigService = Depends(get_user_llm_config_service)
+):
+    """获取可用的LLM提供商列表"""
+    try:
+        providers = service.list_available_providers()
+        return api_response(data=providers)
+    except Exception as e:
+        return api_response(code=500, message=f"获取提供商列表失败: {str(e)}")
+
+# @router.get("/models/{provider}", response_model=ModelsResponse)
+# async def get_available_models(
+#     provider: str = Path(..., description="提供商名称"),
+#     service: UserLLMConfigService = Depends(get_user_llm_config_service)
+# ):
+#     """获取指定提供商的可用模型列表"""
+#     try:
+#         models = service.list_available_models(provider)
+#         return api_response(data=models)
+#     except Exception as e:
+#         return api_response(code=500, message=f"获取模型列表失败: {str(e)}")
+    
+
+@router.get("/models/available", response_model=AvailableModelsResponse)
+async def get_available_models_for_user(
+    current_user: User = Depends(get_current_user),
+    service: UserLLMConfigService = Depends(get_user_llm_config_service)
+):
+    """获取用户配置的所有提供商的可用模型列表"""
+    try:
+        # 获取用户配置
+        user_configs = await service.list_configs(current_user.id)
+        user_providers = {}
+        
+        # 构建用户配置的提供商映射
+        for config in user_configs:
+            provider = config.provider
+            if provider not in user_providers:
+                user_providers[provider] = {
+                    "base_url": config.base_url,
+                    "config_name": config.config_name
+                }
+        
+        # 定义所有提供商的信息
+        all_providers_info = {
+            "openai": {"label": "OpenAI"},
+            "deepseek": {"label": "DeepSeek"},
+            "anthropic": {"label": "Anthropic"},
+            "gemini": {"label": "Google Gemini"},
+            "azure": {"label": "Azure OpenAI"},
+            "ollama": {"label": "Ollama"}
+        }
+        
+        result = []
+        
+        # 只为用户已配置的提供商获取模型列表
+        for provider_name in user_providers.keys():
+            try:
+                provider_info = all_providers_info.get(provider_name, {"label": provider_name.title()})
+                
+                # 使用默认模型列表
+                models = _get_default_models(provider_name)
+                
+                # 如果是Ollama，尝试获取动态模型列表
+                if provider_name == "ollama":
+                    try:
+                        base_url = user_providers[provider_name].get("base_url", "http://localhost:11434")
+                        # TODO: 实现动态获取Ollama模型
+                        # 暂时使用扩展的静态列表
+                        models = [
+                            "llama3.2:latest", "llama3.2:3b", "llama3.2:1b",
+                            "llama3.1:latest", "llama3.1:8b", "llama3.1:70b",
+                            "qwen2.5:latest", "qwen2.5:7b", "qwen2.5:14b", "qwen2.5:32b",
+                            "deepseek-r1:1.5b", "deepseek-r1:7b", "deepseek-r1:8b", "deepseek-r1:14b", "deepseek-r1:32b",
+                            "mistral:latest", "mistral:7b",
+                            "phi3:latest", "phi3:mini", "phi3:medium",
+                            "codellama:latest", "codellama:7b", "codellama:13b",
+                            "gemma2:latest", "gemma2:2b", "gemma2:9b", "gemma2:27b"
+                        ]
+                    except Exception as e:
+                        logger.warning(f"获取Ollama动态模型失败，使用默认列表: {str(e)}")
+                
+                if models:
+                    result.append(ProviderModels(
+                        provider=provider_name,
+                        provider_label=provider_info["label"],
+                        models=models,
+                        has_user_config=True
+                    ))
+                    
+            except Exception as e:
+                # 如果某个提供商处理失败，记录错误但继续处理其他提供商
+                logger.error(f"处理 {provider_name} 提供商失败: {str(e)}")
+                # 添加默认模型列表作为后备
+                default_models = _get_default_models(provider_name)
+                if default_models:
+                    result.append(ProviderModels(
+                        provider=provider_name,
+                        provider_label=all_providers_info.get(provider_name, {"label": provider_name.title()})["label"],
+                        models=default_models,
+                        has_user_config=True
+                    ))
+        
+        return api_response(data=result)
+        
+    except Exception as e:
+        logger.error(f"获取可用模型列表失败: {str(e)}")
+        return api_response(code=500, message=f"获取可用模型列表失败: {str(e)}")
+
+# === 兼容性API（保持向后兼容） ===
+
+class LegacyConfigResponse(BaseModel):
+    """旧版配置响应格式"""
     provider: str
     model_name: str
     base_url: Optional[str] = None
@@ -35,325 +459,224 @@ class LLMConfigResponse(BaseModel):
     created_at: str
     updated_at: Optional[str] = None
 
-@router.get("/", response_model=List[LLMConfigResponse])
-async def get_user_llm_configs(
-    current_user: User = Depends(get_current_user)
+@router.get("/legacy/list", response_model=List[LegacyConfigResponse])
+async def get_user_llm_configs_legacy(
+    current_user: User = Depends(get_current_user),
+    service: UserLLMConfigService = Depends(get_user_llm_config_service)
 ):
-    """获取用户所有LLM配置"""
-    service = UserLLMConfigService()
-    configs = service.get_user_configs(current_user.id)
-    
-    # 转换为响应模型（不包含API密钥）
-    response_configs = []
-    for config in configs:
-        config_dict = config.to_dict()
-        # 移除敏感信息
-        config_dict.pop('api_key', None)
-        config_dict.pop('user_id', None)
-        response_configs.append(LLMConfigResponse(**config_dict))
-    
-    return response_configs
+    """获取用户所有LLM配置（兼容性API）"""
+    try:
+        configs = await service.list_configs(current_user.id)
+        
+        # 转换为旧版响应格式
+        legacy_configs = []
+        for config in configs:
+            legacy_configs.append(LegacyConfigResponse(
+                provider=config.provider.value,
+                model_name=config.model_name,
+                base_url=config.base_url,
+                temperature=config.temperature,
+                max_tokens=config.max_tokens,
+                is_default=config.is_default,
+                config_name=config.config_name,
+                created_at=config.created_at.isoformat(),
+                updated_at=config.updated_at.isoformat() if config.updated_at else None
+            ))
+        
+        return legacy_configs
+    except Exception as e:
+        logger.error(f"获取用户LLM配置失败: {str(e)}")
+        raise HTTPException(status_code=500, detail="获取配置列表失败")
 
-@router.get("/default", response_model=Optional[LLMConfigResponse])
-async def get_user_default_llm_config(
-    current_user: User = Depends(get_current_user)
+@router.get("/legacy/default", response_model=Optional[LegacyConfigResponse])
+async def get_user_default_llm_config_legacy(
+    current_user: User = Depends(get_current_user),
+    service: UserLLMConfigService = Depends(get_user_llm_config_service)
 ):
-    """获取用户默认LLM配置"""
-    service = UserLLMConfigService()
-    config = service.get_user_default_config(current_user.id)
-    
-    if not config:
-        return None
-    
-    # 转换为响应模型（不包含API密钥）
-    config_dict = config.to_dict()
-    config_dict.pop('api_key', None)
-    config_dict.pop('user_id', None)
-    
-    return LLMConfigResponse(**config_dict)
+    """获取用户默认LLM配置（兼容性API）"""
+    try:
+        config = await service.get_default_config(current_user.id)
+        
+        if not config:
+            return None
+        
+        # 转换为旧版响应格式
+        return LegacyConfigResponse(
+            provider=config.provider.value,
+            model_name=config.model_name,
+            base_url=config.base_url,
+            temperature=config.temperature,
+            max_tokens=config.max_tokens,
+            is_default=config.is_default,
+            config_name=config.config_name,
+            created_at=config.created_at.isoformat(),
+            updated_at=config.updated_at.isoformat() if config.updated_at else None
+        )
+    except Exception as e:
+        logger.error(f"获取用户默认LLM配置失败: {str(e)}")
+        raise HTTPException(status_code=500, detail="获取默认配置失败")
 
-@router.post("/", response_model=dict)
-async def create_user_llm_config(
-    config_request: LLMConfigRequest,
-    current_user: User = Depends(get_current_user)
-):
-    """创建或更新用户LLM配置"""
-    service = UserLLMConfigService()
-    
-    # 创建配置对象
-    config = UserLLMConfig(
-        user_id=current_user.id,
-        provider=config_request.provider,
-        model_name=config_request.model_name,
-        api_key=config_request.api_key,
-        base_url=config_request.base_url,
-        temperature=config_request.temperature,
-        max_tokens=config_request.max_tokens,
-        is_default=config_request.is_default,
-        config_name=config_request.config_name
-    )
-    
-    # 保存配置
-    success = service.save_user_config(config)
-    
-    if not success:
-        raise HTTPException(status_code=500, detail="保存配置失败")
-    
-    return {"success": True, "message": "配置保存成功"}
-
-@router.delete("/{config_name}", response_model=dict)
-async def delete_user_llm_config(
-    config_name: str,
-    current_user: User = Depends(get_current_user)
-):
-    """删除用户LLM配置"""
-    service = UserLLMConfigService()
-    
-    success = service.delete_user_config(current_user.id, config_name)
-    
-    if not success:
-        raise HTTPException(status_code=404, detail="配置不存在或删除失败")
-    
-    return {"success": True, "message": "配置删除成功"}
+# === Ollama特殊API ===
 
 @router.get("/ollama/models", response_model=List[str])
 async def get_ollama_models(
-    base_url: Optional[str] = "http://localhost:11434",
+    base_url: Optional[str] = Query("http://localhost:11434", description="Ollama服务器地址"),
     current_user: User = Depends(get_current_user)
 ):
-    """获取 Ollama 实际可用的模型列表"""
+    """获取Ollama可用模型列表"""
     try:
-        from ...lib.providers.ollama import OllamaProvider
-        
-        # 创建 Ollama 提供者实例
-        ollama_provider = OllamaProvider(base_url=base_url)
-        
-        # 获取模型列表
-        models = await ollama_provider.list_models()
-        
+        # TODO: 实现动态获取Ollama模型列表
+        # 这里暂时返回静态列表
+        models = ["llama2", "llama2:13b", "codellama", "mistral", "neural-chat"]
         return models
     except Exception as e:
-        raise HTTPException(
-            status_code=500, 
-            detail=f"获取 Ollama 模型列表失败: {str(e)}"
-        )
+        logger.error(f"获取Ollama模型列表失败: {str(e)}")
+        raise HTTPException(status_code=500, detail="获取Ollama模型列表失败")
 
-@router.get("/models/available", response_model=List[dict])
+@router.get("/models/available", response_model=AvailableModelsResponse)
 async def get_available_models_for_user(
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    service: UserLLMConfigService = Depends(get_user_llm_config_service)
 ):
-    """获取用户配置的提供商的所有可用模型（包括动态获取的）+ 默认模型列表，去重合并"""
+    """获取用户配置的所有提供商的可用模型列表"""
     try:
-        service = UserLLMConfigService()
-        user_configs = service.get_user_configs(current_user.id)
+        # 获取用户配置
+        user_configs = await service.list_configs(current_user.id)
+        user_providers = {}
         
-        # 获取用户配置的所有提供商
-        configured_providers = {}
+        # 构建用户配置的提供商映射
         for config in user_configs:
-            provider = config.provider.value
-            if provider not in configured_providers:
-                configured_providers[provider] = {
+            provider = config.provider
+            if provider not in user_providers:
+                user_providers[provider] = {
                     "base_url": config.base_url,
-                    "api_key": config.api_key
+                    "config_name": config.config_name
                 }
         
-        # 获取所有可用提供商的信息
+        # 定义所有提供商的信息
         all_providers_info = {
-            "openai": {
-                "label": "OpenAI",
-                "is_dynamic": True  # 现在所有提供商都支持动态获取
-            },
-            "deepseek": {
-                "label": "DeepSeek",
-                "is_dynamic": True
-            },
-            "gemini": {
-                "label": "Google Gemini",
-                "is_dynamic": True
-            },
-            "anthropic": {
-                "label": "Anthropic",
-                "is_dynamic": True
-            },
-            "azure": {
-                "label": "Azure OpenAI",
-                "is_dynamic": True
-            },
-            "ollama": {
-                "label": "Ollama",
-                "is_dynamic": True
-            }
+            "openai": {"label": "OpenAI"},
+            "deepseek": {"label": "DeepSeek"},
+            "anthropic": {"label": "Anthropic"},
+            "gemini": {"label": "Google Gemini"},
+            "azure": {"label": "Azure OpenAI"},
+            "ollama": {"label": "Ollama"}
         }
         
         result = []
         
-        # 为每个提供商获取模型列表
-        for provider_name, provider_info in all_providers_info.items():
+        # 只为用户已配置的提供商获取模型列表
+        for provider_name in user_providers.keys():
             try:
-                models = []
-                provider_config = configured_providers.get(provider_name, {})
+                provider_info = all_providers_info.get(provider_name, {"label": provider_name.title()})
                 
-                # 动态获取模型列表（如果用户已配置该提供商）
-                if provider_name in configured_providers:
+                # 使用默认模型列表
+                models = _get_default_models(provider_name)
+                
+                # 如果是Ollama，尝试获取动态模型列表
+                if provider_name == "ollama":
                     try:
-                        provider_instance = await _create_provider_instance(
-                            provider_name, 
-                            provider_config.get("api_key"),
-                            provider_config.get("base_url")
-                        )
-                        if provider_instance:
-                            dynamic_models = await provider_instance.list_models()
-                            if dynamic_models:
-                                models = dynamic_models
+                        base_url = user_providers[provider_name].get("base_url", "http://localhost:11434")
+                        # TODO: 实现动态获取Ollama模型
+                        # 暂时使用扩展的静态列表
+                        models = [
+                            "llama3.2:latest", "llama3.2:3b", "llama3.2:1b",
+                            "llama3.1:latest", "llama3.1:8b", "llama3.1:70b",
+                            "qwen2.5:latest", "qwen2.5:7b", "qwen2.5:14b", "qwen2.5:32b",
+                            "deepseek-r1:1.5b", "deepseek-r1:7b", "deepseek-r1:8b", "deepseek-r1:14b", "deepseek-r1:32b",
+                            "mistral:latest", "mistral:7b",
+                            "phi3:latest", "phi3:mini", "phi3:medium",
+                            "codellama:latest", "codellama:7b", "codellama:13b",
+                            "gemma2:latest", "gemma2:2b", "gemma2:9b", "gemma2:27b"
+                        ]
                     except Exception as e:
-                        print(f"动态获取{provider_name}模型失败: {str(e)}")
+                        logger.warning(f"获取Ollama动态模型失败，使用默认列表: {str(e)}")
                 
-                # 如果动态获取失败或用户未配置，使用默认模型列表
-                if not models:
-                    models = _get_default_models(provider_name)
-                
-                # 去重（保持顺序）
-                unique_models = []
-                seen = set()
-                for model in models:
-                    if model not in seen:
-                        unique_models.append(model)
-                        seen.add(model)
-                
-                if unique_models:
-                    result.append({
-                        "provider": provider_name,
-                        "provider_label": provider_info["label"],
-                        "models": unique_models,
-                        "is_dynamic": provider_info["is_dynamic"] and provider_name in configured_providers,
-                        "base_url": provider_config.get("base_url"),
-                        "is_configured": provider_name in configured_providers
-                    })
+                if models:
+                    result.append(ProviderModels(
+                        provider=provider_name,
+                        provider_label=provider_info["label"],
+                        models=models,
+                        has_user_config=True
+                    ))
                     
             except Exception as e:
-                # 如果某个提供商获取失败，记录错误但继续处理其他提供商
-                print(f"获取 {provider_name} 模型列表失败: {str(e)}")
-                # 即使失败也添加默认模型列表
-                result.append({
-                    "provider": provider_name,
-                    "provider_label": provider_info["label"],
-                    "models": _get_default_models(provider_name),
-                    "is_dynamic": False,
-                    "base_url": None,
-                    "is_configured": provider_name in configured_providers,
-                    "error": f"获取模型列表失败: {str(e)}"
-                })
-                continue
+                # 如果某个提供商处理失败，记录错误但继续处理其他提供商
+                logger.error(f"处理 {provider_name} 提供商失败: {str(e)}")
+                # 添加默认模型列表作为后备
+                default_models = _get_default_models(provider_name)
+                if default_models:
+                    result.append(ProviderModels(
+                        provider=provider_name,
+                        provider_label=all_providers_info.get(provider_name, {"label": provider_name.title()})["label"],
+                        models=default_models,
+                        has_user_config=True
+                    ))
         
-        return result
+        return api_response(data=result)
         
     except Exception as e:
-        raise HTTPException(
-            status_code=500, 
-            detail=f"获取可用模型列表失败: {str(e)}"
-        )
+        logger.error(f"获取可用模型列表失败: {str(e)}")
+        return api_response(code=500, message=f"获取可用模型列表失败: {str(e)}")
 
-def _get_provider_label(provider_name: str) -> str:
-    """获取提供商的显示名称"""
-    labels = {
-        "openai": "OpenAI",
-        "deepseek": "DeepSeek", 
-        "azure": "Azure OpenAI",
-        "ollama": "Ollama",
-        "anthropic": "Anthropic",
-        "gemini": "Google Gemini"
-    }
-    return labels.get(provider_name, provider_name.title())
-
-@router.get("/providers", response_model=List[dict])
-async def get_available_providers():
-    """获取可用的LLM提供商列表"""
-    providers = [
-        {
-            "value": LLMProvider.OPENAI.value,
-            "label": "OpenAI",
-            "models": ["gpt-4", "gpt-4-turbo", "gpt-3.5-turbo"],
-            "requires_api_key": True,
-            "supports_custom_models": False
-        },
-        {
-            "value": LLMProvider.DEEPSEEK.value,
-            "label": "DeepSeek",
-            "models": ["deepseek-chat", "deepseek-coder", "deepseek-reasoner"],
-            "requires_api_key": True,
-            "default_base_url": "https://api.deepseek.com",
-            "supports_custom_models": True
-        },
-        {
-            "value": LLMProvider.AZURE.value,
-            "label": "Azure OpenAI",
-            "models": ["gpt-4", "gpt-35-turbo"],
-            "requires_api_key": True,
-            "supports_custom_models": True
-        },
-        {
-            "value": LLMProvider.OLLAMA.value,
-            "label": "Ollama",
-            "models": ["llama2", "llama3", "qwen", "mistral","deepseek-r1:32b","qwen2.5:32b"],
-            "requires_api_key": False,
-            "default_base_url": "http://localhost:11434",
-            "supports_custom_models": True,
-            "supports_dynamic_models": True
-        },
-        {
-            "value": LLMProvider.ANTHROPIC.value,
-            "label": "Anthropic",
-            "models": ["claude-3.7-sonnet", "claude-4-sonnet"],
-            "requires_api_key": True,
-            "supports_custom_models": False
-        },
-        {
-            "value": LLMProvider.GEMINI.value,
-            "label": "Google Gemini",
-            "models": ["gemini-2.5-pro", "gemini-2.5-flash"],
-            "requires_api_key": True,
-            "default_base_url": None,
-            "supports_custom_models": True
-        }
-    ]
-    
-    return providers 
-
-async def _create_provider_instance(provider_name: str, api_key: str, base_url: str = None):
-    """创建提供商实例"""
-    try:
-        if provider_name == "openai":
-            from ...lib.providers.openai import OpenAIProvider
-            return OpenAIProvider(api_key=api_key, base_url=base_url)
-        elif provider_name == "deepseek":
-            from ...lib.providers.deepseek import DeepSeekProvider
-            return DeepSeekProvider(api_key=api_key, base_url=base_url)
-        elif provider_name == "gemini":
-            from ...lib.providers.gemini import GeminiProvider
-            return GeminiProvider(api_key=api_key, base_url=base_url)
-        elif provider_name == "anthropic":
-            from ...lib.providers.anthropic import AnthropicProvider
-            return AnthropicProvider(api_key=api_key, base_url=base_url)
-        elif provider_name == "azure":
-            from ...lib.providers.azure import AzureOpenAIProvider
-            return AzureOpenAIProvider(api_key=api_key, base_url=base_url)
-        elif provider_name == "ollama":
-            from ...lib.providers.ollama import OllamaProvider
-            return OllamaProvider(api_key="ollama-local", base_url=base_url or "http://localhost:11434")
-        else:
-            return None
-    except Exception as e:
-        print(f"创建{provider_name}提供商实例失败: {str(e)}")
-        return None
+# === 辅助函数 ===
 
 def _get_default_models(provider_name: str) -> List[str]:
     """获取提供商的默认模型列表"""
     default_models = {
-        "openai": ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-4", "gpt-3.5-turbo", "o1-preview", "o1-mini"],
-        "deepseek": ["deepseek-chat", "deepseek-coder", "deepseek-reasoner", "deepseek-r1", "deepseek-r1-lite-preview"],
-        "gemini": ["gemini-2.0-flash-exp", "gemini-1.5-pro", "gemini-1.5-flash", "gemini-1.5-flash-8b"],
-        "anthropic": ["claude-3-5-sonnet-20241022", "claude-3-5-sonnet-20240620", "claude-3-5-haiku-20241022", "claude-3-opus-20240229"],
-        "azure": ["gpt-4", "gpt-4-32k", "gpt-4-turbo", "gpt-4o", "gpt-35-turbo", "gpt-35-turbo-16k"],
-        "ollama": ["llama2", "llama3", "qwen", "mistral", "deepseek-r1:32b", "qwen2.5:32b"]
+        "openai": [
+            "gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-4", "gpt-3.5-turbo",
+            "o1-preview", "o1-mini"
+        ],
+        "deepseek": [
+            "deepseek-chat", "deepseek-coder", "deepseek-reasoner",
+            "deepseek-r1", "deepseek-r1-lite-preview"
+        ],
+        "anthropic": [
+            "claude-3-5-sonnet-20241022", "claude-3-5-sonnet-20240620",
+            "claude-3-5-haiku-20241022", "claude-3-opus-20240229"
+        ],
+        "gemini": [
+            "gemini-2.0-flash-exp", "gemini-1.5-pro", "gemini-1.5-flash", "gemini-1.5-flash-8b"
+        ],
+        "azure": [
+            "gpt-4o", "gpt-4-turbo", "gpt-4", "gpt-4-32k",
+            "gpt-35-turbo", "gpt-35-turbo-16k"
+        ],
+        "ollama": [
+            "llama3.2:latest", "llama3.2:3b", "llama3.2:1b",
+            "llama3.1:latest", "llama3.1:8b", "llama3.1:70b",
+            "qwen2.5:latest", "qwen2.5:7b", "qwen2.5:14b", "qwen2.5:32b",
+            "deepseek-r1:1.5b", "deepseek-r1:7b", "deepseek-r1:8b", "deepseek-r1:14b", "deepseek-r1:32b",
+            "mistral:latest", "mistral:7b",
+            "phi3:latest", "phi3:mini", "phi3:medium",
+            "codellama:latest", "codellama:7b", "codellama:13b",
+            "gemma2:latest", "gemma2:2b", "gemma2:9b", "gemma2:27b"
+        ]
     }
-    return default_models.get(provider_name, []) 
+    return default_models.get(provider_name, [])
+
+# 在文件末尾添加新的API端点
+@router.get("/model-limits/{model_name}")
+async def get_model_limits(
+    model_name: str = Path(..., description="模型名称")
+):
+    """获取指定模型的推荐token参数"""
+    try:
+        # 使用BaseProvider的get_model_limits方法
+        from ...lib.providers.base import BaseProvider
+        provider = BaseProvider()
+        limits = provider.get_model_limits(model_name)
+        
+        return api_response(
+            data={
+                "model_name": model_name,
+                "context_length": limits["context_length"],
+                "max_tokens": limits["max_tokens"],
+                "description": f"模型 {model_name} 的推荐参数"
+            },
+            message="获取模型参数成功"
+        )
+    except Exception as e:
+        logger.error(f"获取模型参数失败: {str(e)}")
+        return api_response(code=500, message=f"获取模型参数失败: {str(e)}")

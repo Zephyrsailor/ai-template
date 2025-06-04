@@ -105,6 +105,7 @@ const ChatInterface = ({
             const defaultConfig = await fetchDefaultLLMConfig();
 
             if (defaultConfig && defaultConfig.model_name) {
+              console.log('ChatInterface - 设置用户默认模型:', defaultConfig.model_name);
               setSelectedModel(defaultConfig.model_name);
               // 同时调用外部的onModelChange
               if (externalOnModelChange) {
@@ -114,19 +115,12 @@ const ChatInterface = ({
             }
           }
           
-          // 如果没有用户默认配置，设置一个系统默认值
-          setSelectedModel('gpt-3.5-turbo');
-          // 同时调用外部的onModelChange
-          if (externalOnModelChange) {
-            externalOnModelChange('gpt-3.5-turbo');
-          }
+          // 如果没有用户默认配置，不设置任何默认值
+          // 让EnhancedLLMSelector组件来处理默认模型选择
+          console.log('ChatInterface - 没有找到用户默认配置，等待LLMSelector自动选择');
         } catch (error) {
           console.error('初始化默认模型失败:', error);
-          setSelectedModel('gpt-3.5-turbo');
-          // 同时调用外部的onModelChange
-          if (externalOnModelChange) {
-            externalOnModelChange('gpt-3.5-turbo');
-          }
+          // 出错时也不设置默认值，让LLMSelector处理
         }
       }
     };
@@ -157,23 +151,42 @@ const ChatInterface = ({
         setCurrentReader(null);
       }
 
-      // 3. 调用后端停止API（异步进行，不等待结果）
+      // 3. 调用后端停止API，让后端处理状态保存
       const currentConversation = conversations.find(c => c.id === activeConversationId);
       const conversationId = currentConversation?.serverId;
       
       if (conversationId) {
-        // 不等待结果，立即执行
+        // 调用后端停止API（异步进行，不等待结果）
         axios.post(`/api/chat/stop?conversation_id=${conversationId}`)
+          .then(() => {
+            console.log('后端停止API调用成功');
+          })
           .catch(error => {
             console.warn('后端停止API调用失败:', error);
           });
       }
 
-      // 4. 立即重置所有状态
+      // 4. 立即重置流式状态，但保留已显示的消息
       setIsStreaming(false);
       setIsLoading(false);
       setIsThinking(false);
       setThinking('');
+      
+      // 5. 如果有未完成的thinking，标记为已完成
+      setConversations(prev =>
+        prev.map(conv => {
+          if (conv.id === activeConversationId) {
+            const updatedMessages = conv.messages.map(msg => {
+              if (msg.type === 'thinking' && !msg.isCompleted) {
+                return { ...msg, isCompleted: true };
+              }
+              return msg;
+            });
+            return { ...conv, messages: updatedMessages };
+          }
+          return conv;
+        })
+      );
       
       console.log('聊天生成已停止');
     } catch (error) {
@@ -336,22 +349,29 @@ const ChatInterface = ({
               
               // 处理会话创建事件
               if (type === 'conversation_created') {
-                // 更新当前会话的serverId
+                // 更新当前会话的serverId和id
                 const newConversationId = chunkData.data;
                 console.log('服务器创建了新会话，ID:', newConversationId);
                 
-                // 更新会话ID
+                // 更新会话ID和serverId
                 setConversations(prev =>
                   prev.map(conv => {
                     if (conv.id === activeConversationId) {
-                      return { ...conv, serverId: newConversationId };
+                      return { 
+                        ...conv, 
+                        id: newConversationId,  // 更新本地ID
+                        serverId: newConversationId  // 更新服务器ID
+                      };
                     }
                     return conv;
                   })
                 );
                 
+                // 更新当前活跃会话ID
+                setActiveConversationId(newConversationId);
+                
                 // 保存更新后的会话
-                saveConversationAfterCreation(activeConversationId, newConversationId);
+                saveConversationAfterCreation(newConversationId, newConversationId);
                 continue;
               }
               
@@ -418,7 +438,6 @@ const ChatInterface = ({
                     role: 'assistant',
                     thinking: chunkData.data || "",
                     createdAt: new Date().toISOString(),
-                    receivedOrder: receivedOrderCounter, // 添加接收顺序
                     type: 'thinking',
                     isCompleted: false,
                     messageId: streamMessageId // 使用统一的messageId
@@ -437,7 +456,6 @@ const ChatInterface = ({
                       name: tool.name || tool.tool_name,
                       arguments: tool.arguments || {},
                       createdAt: new Date().toISOString(),
-                      receivedOrder: receivedOrderCounter, // 添加接收顺序
                       type: 'tool_call',
                       messageId: streamMessageId // 使用统一的messageId
                     });
@@ -468,7 +486,6 @@ const ChatInterface = ({
                     role: 'assistant',
                     content: chunkData.data || "",
                     createdAt: new Date().toISOString(),
-                    receivedOrder: receivedOrderCounter, // 添加接收顺序
                     type: 'content',
                     knowledgeBaseIds: userMessage.knowledgeBaseIds,
                     mcpServerIds: userMessage.mcpServerIds,
@@ -482,7 +499,6 @@ const ChatInterface = ({
                     role: 'assistant',
                     content: chunkData.data || "",
                     createdAt: new Date().toISOString(),
-                    receivedOrder: receivedOrderCounter, // 添加接收顺序
                     type: 'reference',
                     messageId: streamMessageId // 使用统一的messageId
                   });
@@ -776,7 +792,7 @@ const ChatInterface = ({
             return {
               id: `${conv.id}`,
               serverId: conv.id,
-              title: conv.title || "New Conversation",
+              title: conv.title || "新会话",
               messages: convMessages.length > 0
                 ? convMessages.flatMap((msg, msgIndex) => {
                     const formattedEntries = [];
@@ -899,13 +915,13 @@ const ChatInterface = ({
     }
   };
 
-  // 重新设计消息显示 - 完善的业内最佳实践方案
-  const renderMessage = (message, index) => {
+  // 重新设计消息显示 - 按时间顺序自然显示
+  const renderMessage = (message, index, filteredMessages = messages) => {
     if (message.role === 'user') {
-      // 用户消息直接渲染，不需要分组
+      // 用户消息直接渲染
       return (
         <div key={message.messageId || message.id} className="flex items-start gap-3 justify-end mb-6">
-          <div className="max-w-[85%] order-1">
+          <div className="max-w-2xl order-1">
             <MessageBubble
               content={message.content}
               isUser={true}
@@ -924,41 +940,37 @@ const ChatInterface = ({
         </div>
       );
     } else if (message.role === 'assistant') {
-      // 按messageId分组，同一个后端Message的所有组件在一个框框里
+      // Assistant消息：按messageId分组显示，但保持接收顺序
       const currentGroup = [];
       let startIndex = index;
       
-      // 向前查找，找到同一个messageId的开始
+      // 向前查找，找到同一个messageId的开始 - 使用filteredMessages
       while (startIndex > 0 && 
-             messages[startIndex - 1]?.role === 'assistant' && 
-             messages[startIndex - 1]?.messageId === message.messageId) {
+             filteredMessages[startIndex - 1]?.role === 'assistant' && 
+             filteredMessages[startIndex - 1]?.messageId === message.messageId) {
         startIndex--;
       }
       
-      // 收集同一个messageId的所有消息
+      // 收集同一个messageId的所有消息 - 使用filteredMessages
       let endIndex = startIndex;
-      while (endIndex < messages.length && 
-             messages[endIndex]?.role === 'assistant' && 
-             messages[endIndex]?.messageId === message.messageId) {
-        currentGroup.push(messages[endIndex]);
+      while (endIndex < filteredMessages.length && 
+             filteredMessages[endIndex]?.role === 'assistant' && 
+             filteredMessages[endIndex]?.messageId === message.messageId) {
+        currentGroup.push(filteredMessages[endIndex]);
         endIndex++;
       }
       
       // 只在第一个消息时渲染整个组
       if (index === startIndex) {
-
-        
-        // 按接收顺序显示，不强制排序（保持流式响应的自然顺序）
-        const orderedGroup = [...currentGroup];
-        
+        // 按接收时间顺序显示，保持自然的流式响应顺序
         return (
           <div key={`group-${message.messageId || message.id}`} className="flex items-start gap-3 mb-6">
             <div className="w-9 h-9 rounded-full bg-purple-100 flex items-center justify-center flex-shrink-0">
               <RiRobot2Line size={18} className="text-purple-700" />
             </div>
-            <div className="max-w-[85%] bg-gray-50 rounded-2xl p-4 border border-gray-200">
-              {/* 按正确顺序显示同一Message的所有组件 */}
-              {orderedGroup.map((msg, idx) => (
+            <div className="max-w-4xl bg-gray-50 rounded-2xl p-4 border border-gray-200">
+              {/* 按接收顺序显示同一Message的所有组件 */}
+              {currentGroup.map((msg, idx) => (
                 <div key={msg.id} className={idx > 0 ? "mt-3" : ""}>
                   {msg.type === 'thinking' && (
                     <ThinkingBubble
@@ -1008,7 +1020,7 @@ const ChatInterface = ({
               
               {/* 时间戳 */}
               <div className="text-xs text-gray-400 mt-3 pt-2 border-t border-gray-200">
-                {new Date(orderedGroup[orderedGroup.length - 1]?.createdAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                {new Date(currentGroup[currentGroup.length - 1]?.createdAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
               </div>
             </div>
           </div>
@@ -1021,24 +1033,15 @@ const ChatInterface = ({
     return null;
   };
 
-  // 格式化后端消息为前端格式的通用函数
+  // 格式化后端消息为前端格式的通用函数 - 按时间顺序自然追加
   const formatBackendMessages = (backendMessages) => {
     const formattedMessages = [];
-    let currentAssistantGroup = null;
-    let assistantGroupCounter = 0;
     
     backendMessages.forEach((msg, msgIndex) => {
       const baseTimestamp = msg.timestamp || new Date().toISOString();
       
       if (msg.role === 'user') {
-        // 用户消息：结束当前assistant组，添加用户消息
-        if (currentAssistantGroup) {
-          // 将当前assistant组的所有组件添加到formattedMessages
-          formattedMessages.push(...currentAssistantGroup.entries);
-          currentAssistantGroup = null;
-        }
-        
-        // 添加用户消息
+        // 用户消息直接添加，每个用户消息使用独立的messageId
         formattedMessages.push({
           id: `content-${msg.id || Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
           role: msg.role,
@@ -1050,21 +1053,16 @@ const ChatInterface = ({
           useWebSearch: !!msg.metadata?.web_search,
           isError: msg.isError,
           isHistorical: true,
-          messageId: `user-msg-${msg.id || msgIndex}`
+          messageId: `user-msg-${msg.id || msgIndex}-${Date.now()}`
         });
       } else if (msg.role === 'assistant') {
-        // Assistant消息：合并到当前组或创建新组
-        if (!currentAssistantGroup) {
-          assistantGroupCounter++;
-          currentAssistantGroup = {
-            messageId: `assistant-group-${assistantGroupCounter}`,
-            entries: []
-          };
-        }
+        // Assistant消息：每个助手消息使用独立的messageGroupId，确保不同轮次不会混合
+        const messageGroupId = `backend-msg-${msg.id || msgIndex}-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
         
-        // 添加思考消息（如果存在）
+        // 根据后端数据的实际结构，按顺序添加组件
+        // 1. 如果有thinking，先添加thinking
         if (msg.thinking) {
-          currentAssistantGroup.entries.push({
+          formattedMessages.push({
             id: `thinking-${msg.id || Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
             role: 'assistant',
             thinking: msg.thinking,
@@ -1072,13 +1070,31 @@ const ChatInterface = ({
             type: 'thinking',
             isCompleted: true,
             isHistorical: true,
-            messageId: currentAssistantGroup.messageId
+            messageId: messageGroupId
           });
         }
         
-        // 添加内容消息（如果存在）
+        // 2. 如果有tool_calls，在content之前添加tool_calls
+        if (Array.isArray(msg.tool_calls)) {
+          msg.tool_calls.forEach((toolCall, index) => {
+            formattedMessages.push({
+              id: toolCall.id || `tool-${msg.id}-${index}-${Math.random().toString(36).substring(2, 9)}`,
+              role: 'assistant',
+              name: toolCall.name || toolCall.tool_name,
+              arguments: toolCall.arguments || {},
+              result: toolCall.result,
+              error: toolCall.error,
+              createdAt: baseTimestamp,
+              type: 'tool_call',
+              isHistorical: true,
+              messageId: messageGroupId
+            });
+          });
+        }
+        
+        // 3. 如果有content，最后添加content
         if (msg.content) {
-          currentAssistantGroup.entries.push({
+          formattedMessages.push({
             id: `content-${msg.id || Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
             role: msg.role,
             content: msg.content,
@@ -1089,34 +1105,11 @@ const ChatInterface = ({
             useWebSearch: !!msg.metadata?.web_search,
             isError: msg.isError,
             isHistorical: true,
-            messageId: currentAssistantGroup.messageId
-          });
-        }
-        
-        // 添加工具调用（如果存在）
-        if (Array.isArray(msg.tool_calls)) {
-          msg.tool_calls.forEach((toolCall, index) => {
-            currentAssistantGroup.entries.push({
-              id: toolCall.id || `tool-${msg.id}-${index}-${Math.random().toString(36).substring(2, 9)}`,
-              role: 'assistant',
-              name: toolCall.name || toolCall.tool_name,
-              arguments: toolCall.arguments || {},
-              result: toolCall.result,
-              error: toolCall.error,
-              createdAt: baseTimestamp,
-              type: 'tool_call',
-              isHistorical: true,
-              messageId: currentAssistantGroup.messageId
-            });
+            messageId: messageGroupId
           });
         }
       }
     });
-    
-    // 处理最后一个assistant组（如果存在）
-    if (currentAssistantGroup) {
-      formattedMessages.push(...currentAssistantGroup.entries);
-    }
     
     return formattedMessages;
   };
@@ -1163,7 +1156,7 @@ const ChatInterface = ({
   };
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-gray-50 fixed top-0 left-0">
+    <div className="flex h-screen w-screen overflow-hidden bg-gradient-to-br from-gray-50 to-white fixed top-0 left-0">
       {/* Sidebar */}
       <Sidebar
         conversations={conversations.filter(conv =>
@@ -1216,29 +1209,87 @@ const ChatInterface = ({
       />
 
       {/* Main content */}
-      <div className="flex flex-col flex-1 h-full overflow-hidden relative">
+      <div className="flex flex-col flex-1 overflow-hidden bg-white border-l border-gray-200 shadow-sm" style={{height: '100vh'}}>
         {/* Header */}
-        <Header
-          isThinking={isThinking}
-          onOpenSettings={onOpenSettings}
-          selectedModel={selectedModel}
-          onModelChange={(model) => {
-            console.log('ChatInterface - onModelChange called with:', model);
-            setSelectedModel(model);
-            // 如果有外部传入的onModelChange，也要调用它
-            if (externalOnModelChange) {
-              externalOnModelChange(model);
-            }
-            console.log('ChatInterface - selectedModel state updated to:', model);
-          }}
-        />
+        <div className="bg-white border-b border-gray-200 shadow-sm">
+          <Header
+            isThinking={isThinking}
+            onOpenSettings={onOpenSettings}
+            selectedModel={selectedModel}
+            onModelChange={(model) => {
+              console.log('ChatInterface - onModelChange called with:', model);
+              setSelectedModel(model);
+              // 如果有外部传入的onModelChange，也要调用它
+              if (externalOnModelChange) {
+                externalOnModelChange(model);
+              }
+              console.log('ChatInterface - selectedModel state updated to:', model);
+            }}
+          />
+        </div>
 
-        {/* Chat area */}
-        <div className="flex-1 overflow-y-auto bg-white relative">
-          <div className="max-w-3xl mx-auto h-full py-4 px-4">
+        {/* Chat area - 现代化设计 */}
+        <div className="flex-1 bg-gradient-to-b from-gray-50/30 to-white relative overflow-y-auto" style={{height: 'calc(100vh - 60px - 140px)'}}>
+          <div className="max-w-5xl mx-auto h-full py-6 px-6">
             {/* Messages */}
-            <div className="space-y-6 pb-20 static">
-              {messages.map((message, index) => renderMessage(message, index))}
+            <div className="space-y-8 pb-32 pt-4">
+              {/* 空状态时显示欢迎信息 - 只在没有任何用户消息时显示 */}
+              {messages.filter(msg => msg.role === 'user').length === 0 && (
+                <div className="text-center py-16">
+                  <div className="w-20 h-20 mx-auto mb-6 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center">
+                    <div className="text-white text-2xl">🤖</div>
+                  </div>
+                  <h3 className="text-xl font-semibold text-gray-800 mb-2">Hello! 我是您的AI助手</h3>
+                  <p className="text-gray-600 max-w-md mx-auto">
+                    我可以帮助您回答问题、解决问题，或者只是聊天。请随时向我提问！
+                  </p>
+                  <div className="mt-8 flex flex-wrap justify-center gap-3">
+                    <button 
+                      onClick={() => handleSendMessage("请解释一下人工智能的基本概念")}
+                      className="bg-white border border-gray-200 rounded-lg px-4 py-2 text-sm text-gray-600 hover:border-blue-300 hover:text-blue-600 transition-colors cursor-pointer"
+                    >
+                      💡 解释概念
+                    </button>
+                    <button 
+                      onClick={() => handleSendMessage("帮我搜索最新的科技新闻")}
+                      className="bg-white border border-gray-200 rounded-lg px-4 py-2 text-sm text-gray-600 hover:border-blue-300 hover:text-blue-600 transition-colors cursor-pointer"
+                    >
+                      🔍 搜索信息
+                    </button>
+                    <button 
+                      onClick={() => handleSendMessage("我遇到了一个编程问题，请帮我解决")}
+                      className="bg-white border border-gray-200 rounded-lg px-4 py-2 text-sm text-gray-600 hover:border-blue-300 hover:text-blue-600 transition-colors cursor-pointer"
+                    >
+                      🛠️ 解决问题
+                    </button>
+                    <button 
+                      onClick={() => handleSendMessage("你好，我们聊聊天吧")}
+                      className="bg-white border border-gray-200 rounded-lg px-4 py-2 text-sm text-gray-600 hover:border-blue-300 hover:text-blue-600 transition-colors cursor-pointer"
+                    >
+                      💬 随意聊天
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* 实际的消息列表 - 只显示非欢迎消息 */}
+              {messages
+                .filter(msg => msg.id !== 'welcome') // 过滤掉欢迎消息
+                .map((message, index, filteredMessages) => {
+                  // 为每个消息添加更好的样式
+                  return (
+                    <div 
+                      key={message.id || index} 
+                      className={`${
+                        message.role === 'user' 
+                          ? 'flex justify-end' 
+                          : 'flex justify-start'
+                      } animate-fadeIn`}
+                    >
+                      {renderMessage(message, index, filteredMessages)}
+                    </div>
+                  );
+                })}
 
               {/* Scroll anchor */}
               <div ref={messagesEndRef} />
@@ -1246,15 +1297,17 @@ const ChatInterface = ({
           </div>
         </div>
 
-        {/* Input area */}
-        <ChatInput
-          onSendMessage={handleSendMessage}
-          isDisabled={isThinking || isLoading}
-          isLoading={isThinking || isLoading}
-          isStreaming={isStreaming}
-          onStopGeneration={handleStopGeneration}
-          selectedModel={selectedModel}
-        />
+        {/* Input area - 美化输入区域 */}
+        <div className="bg-white border-t border-gray-200 shadow-lg" style={{height: '140px', flexShrink: 0}}>
+          <ChatInput
+            onSendMessage={handleSendMessage}
+            isDisabled={isThinking || isLoading}
+            isLoading={isThinking || isLoading}
+            isStreaming={isStreaming}
+            onStopGeneration={handleStopGeneration}
+            selectedModel={selectedModel}
+          />
+        </div>
       </div>
     </div>
   );

@@ -43,12 +43,66 @@ ai-template/
 └── backend/                 # Python后端应用
     ├── app/                 # FastAPI应用代码
     │   ├── main.py          # FastAPI 应用入口
-    │   ├── api/             # API层 (路由: app/api/routes, 依赖注入: app/api/deps.py)
-    │   ├── core/            # 核心组件 (配置: app/core/config.py, 安全等)
-    │   ├── domain/          # 领域模型 (数据结构: app/domain/models, 模式: app/domain/schemas)
-    │   ├── lib/             # 核心库 (知识库: app/lib/knowledge, MCP: app/lib/mcp, LLM Providers: app/lib/providers)
-    │   ├── services/        # 业务服务逻辑
-    │   └── ...              # (如: data/, utils/)
+    │   ├── api/             # API层
+    │   │   ├── __init__.py  # API模块导出
+    │   │   └── routes/      # API路由
+    │   │       ├── __init__.py      # 路由集成器
+    │   │       ├── auth.py          # 认证路由
+    │   │       ├── chat.py          # 聊天路由
+    │   │       ├── conversations.py # 会话路由
+    │   │       ├── health.py        # 健康检查路由
+    │   │       ├── knowledge.py     # 知识库路由
+    │   │       ├── mcp.py           # MCP工具路由
+    │   │       └── users.py         # 用户路由
+    │   ├── core/            # 核心组件
+    │   │   ├── config.py    # 应用配置
+    │   │   ├── security.py  # 安全认证
+    │   │   ├── logging.py   # 日志管理
+    │   │   ├── repository.py # Repository基类
+    │   │   ├── service.py   # Service基类
+    │   │   ├── database.py  # 数据库管理
+    │   │   └── errors.py    # 异常处理
+    │   ├── config/          # 配置模块
+    │   │   ├── __init__.py  # 配置模块导出
+    │   │   ├── database.py  # 数据库配置
+    │   │   ├── security.py  # 安全配置
+    │   │   ├── logging.py   # 日志配置
+    │   │   ├── providers.py # Provider配置
+    │   │   └── messages/    # 国际化消息
+    │   ├── domain/          # 领域模型
+    │   │   ├── models/      # 数据模型
+    │   │   │   ├── user.py          # 用户模型
+    │   │   │   ├── conversation.py  # 会话模型
+    │   │   │   ├── events.py        # 事件模型
+    │   │   │   └── user_llm_config.py # 用户LLM配置模型
+    │   │   └── schemas/     # 数据Schema
+    │   │       ├── user.py          # 用户Schema
+    │   │       ├── chat.py          # 聊天Schema
+    │   │       ├── conversation.py  # 会话Schema
+    │   │       └── tools.py         # 工具Schema
+    │   ├── repositories/    # 数据访问层
+    │   │   ├── __init__.py          # Repository模块导出
+    │   │   ├── knowledge_repository.py # 知识库Repository
+    │   │   ├── user_repository.py   # 用户Repository
+    │   │   ├── conversation_repository.py # 会话Repository
+    │   │   └── mcp_repository.py    # MCP Repository
+    │   ├── services/        # 业务服务层
+    │   │   ├── chat.py      # 聊天服务
+    │   │   ├── knowledge.py # 知识库服务
+    │   │   ├── user.py      # 用户服务
+    │   │   ├── user_llm_config.py # 用户LLM配置服务
+    │   │   ├── search.py    # 搜索服务
+    │   │   └── mcp.py       # MCP服务
+    │   └── lib/             # 核心库
+    │       ├── knowledge/   # 知识库功能
+    │       ├── mcp/         # MCP工具集成
+    │       └── providers/   # LLM Providers
+    │           ├── base.py      # Provider基类
+    │           ├── openai.py    # OpenAI Provider
+    │           ├── deepseek.py  # DeepSeek Provider
+    │           ├── gemini.py    # Gemini Provider
+    │           ├── azure.py     # Azure OpenAI Provider
+    │           └── ollama.py    # Ollama Provider
     ├── requirements.txt     # Python依赖
     ├── run.py               # 应用启动脚本
     ├── .env.example         # 环境变量示例
@@ -71,11 +125,12 @@ ai-template/
 
 - **app/main.py**: FastAPI应用入口
 - **app/api/**: API层，包含路由 (`app/api/routes`) 和依赖 (`app/api/deps.py`)
-- **app/core/**: 核心组件，如配置 (`app/core/config.py`) 和安全模块
+- **app/core/**: 核心组件，如配置 (`app/core/config.py`)、数据库 (`app/core/database.py`) 和安全模块
 - **app/services/**: 业务逻辑服务，如聊天服务 (`app/services/chat.py`) 和知识库服务 (`app/services/knowledge.py`)
 - **app/lib/knowledge/**: 知识库功能的核心实现
 - **app/lib/providers/**: LLM及其他外部服务提供者的适配层
 - **app/domain/**: 应用的数据结构，包括数据模型 (`app/domain/models`) 和校验模式 (`app/domain/schemas`)
+- **manage_db.py**: 数据库管理脚本，用于创建和重置数据库表
 
 ## 快速开始
 
@@ -84,22 +139,43 @@ ai-template/
 - Python >= 3.11
 - Node.js >= 18.0.0
 - npm 或 yarn
+- PostgreSQL >= 12.0
 
 ### 安装步骤
 
-1. 克隆仓库
+#### 1. 克隆仓库
 ```bash
 git clone https://github.com/yourusername/ai-template.git
 cd ai-template
 ```
 
-2. 安装前端依赖
+#### 2. 安装PostgreSQL (macOS)
+
+使用Homebrew安装PostgreSQL：
+```bash
+# 安装PostgreSQL
+brew install postgresql@14
+
+# 启动PostgreSQL服务
+brew services start postgresql@14
+
+# 创建项目数据库
+createdb ai_template
+```
+
+**macOS PostgreSQL配置说明：**
+- 默认用户：当前系统用户名（无密码）
+- 默认端口：5432
+- 数据目录：`/opt/homebrew/var/postgresql@14/`
+- 配置文件：`/opt/homebrew/var/postgresql@14/postgresql.conf`
+
+#### 3. 安装前端依赖
 ```bash
 cd frontend
 npm install
 ```
 
-3. 安装后端依赖
+#### 4. 安装后端依赖
 ```bash
 cd ../backend
 python -m venv venv
@@ -107,35 +183,148 @@ source venv/bin/activate  # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-4. 配置环境变量
+#### 5. 配置环境变量
 ```bash
 # 在backend目录创建.env文件
-cp .env.example .env  # 然后编辑.env文件
+cp env.example .env
 ```
 
-添加以下内容到.env文件：
-```
-API秘钥
+**macOS环境变量配置：**
+```bash
+# 数据库配置 (macOS默认配置)
+DATABASE_URL=postgresql+asyncpg://$(whoami)@localhost:5432/ai_template
+
+# 如果设置了密码，使用：
+# DATABASE_URL=postgresql+asyncpg://username:password@localhost:5432/ai_template
+
+# API密钥配置
 DEEPSEEK_API_KEY=your_api_key_here
 DEEPSEEK_API_URL=https://api.deepseek.com/
+
+# LLM配置
+LLM_PROVIDER=ollama
+EMBEDDING_PROVIDER=ollama
+OLLAMA_BASE_URL=http://localhost:11434
 ```
 
-5. 启动开发服务器
+#### 6. 初始化数据库
 
-前端：
+```bash
+cd backend
+./scripts/init_db.sh
+```
+
+#### 7. 启动开发服务器
+
+**后端服务：**
+```bash
+cd backend
+source venv/bin/activate
+python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+**前端服务：**
 ```bash
 cd frontend
 npm start
 ```
 
-后端：
+#### 8. 访问应用
+- 前端界面：[http://localhost:3000](http://localhost:3000)
+- 后端API文档：[http://localhost:8000/docs](http://localhost:8000/docs)
+- 健康检查：[http://localhost:8000/health](http://localhost:8000/health)
+
+## 故障排除
+
+### macOS常见问题
+
+#### PostgreSQL连接问题
 ```bash
-cd backend
-uvicorn app.main:app --reload
+# 检查PostgreSQL服务状态
+brew services list | grep postgresql
+
+# 启动PostgreSQL服务
+brew services start postgresql@14
+
+# 检查数据库是否存在
+psql -l | grep ai_template
+
+# 创建数据库（如果不存在）
+createdb ai_template
 ```
 
-6. 访问应用
-浏览器打开 [http://localhost:3000](http://localhost:3000)
+#### Python依赖问题
+```bash
+# 确保使用虚拟环境
+cd backend
+source venv/bin/activate
+
+# 安装缺失的依赖
+pip install python-json-logger
+
+# 重新安装所有依赖
+pip install -r requirements.txt
+```
+
+#### 端口占用问题
+```bash
+# 检查端口占用
+lsof -i :8000
+lsof -i :3000
+
+# 杀死占用进程
+kill -9 <PID>
+```
+
+## 数据库管理
+
+### 数据库架构
+项目采用混合存储架构：
+- **PostgreSQL**: 存储元数据（用户、知识库、对话、消息等）
+- **文件系统**: 存储原始文档和上传文件
+- **ChromaDB**: 存储向量索引和语义检索数据
+
+### 数据库操作
+
+#### 一键切换数据库类型
+
+项目支持PostgreSQL、MySQL、SQLite三种数据库，只需修改环境变量即可切换：
+
+```bash
+# 切换到PostgreSQL（默认）
+DATABASE_TYPE=postgresql
+DATABASE_URL=postgresql+asyncpg://username:password@localhost:5432/ai_template
+
+# 切换到MySQL
+DATABASE_TYPE=mysql
+MYSQL_HOST=localhost
+MYSQL_USER=root
+MYSQL_PASSWORD=your_password
+MYSQL_DATABASE=ai_template
+
+# 切换到SQLite
+DATABASE_TYPE=sqlite
+SQLITE_PATH=data/ai_template.db
+```
+
+#### 数据库管理脚本
+
+```bash
+# 初始化数据库
+./scripts/init_db.sh
+```
+
+### 生产环境部署
+1. 确保PostgreSQL服务运行
+2. 创建数据库：`createdb ai_template`
+3. 配置环境变量中的`DATABASE_URL`
+4. 应用启动时会自动创建表结构
+
+### 开发环境快速重置
+```bash
+# 如果需要清空所有数据重新开始，重新运行初始化脚本
+./scripts/init_db.sh
+```
 
 ## 使用指南
 

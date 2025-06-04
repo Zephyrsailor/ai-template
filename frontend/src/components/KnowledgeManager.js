@@ -17,16 +17,16 @@ import {
 
 // ===== Core Layout Components =====
 const KnowledgeContainer = styled.div`
+  background-color: #ffffff;
+  border-radius: 12px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+  overflow: hidden;
+  margin: 20px;
   display: flex;
   flex-direction: column;
-  width: 100%;
-  color: #374151;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  max-width: ${props => props.isInSettings ? '100%' : '1400px'};
-  margin: 0 auto;
-  padding: 0 ${props => props.isInSettings ? '0' : '16px'};
-  min-height: ${props => props.isInSettings ? 'auto' : 'calc(100vh - 80px)'};
-  height: 100%;
+  min-height: ${props => props.isInSettings ? 'auto' : '600px'};
+  max-height: ${props => props.isInSettings ? '500px' : '800px'};
+  width: ${props => props.isInSettings ? '100%' : 'auto'};
 `;
 
 const Grid = styled.div`
@@ -1223,7 +1223,7 @@ const KnowledgeManager = ({ isInSettings = false }) => {
     
     try {
       // 使用导入的axios实例，确保带有认证信息
-      const response = await axios.post(`/api/knowledge/${selectedKnowledge.id}/rebuild/`);
+      const response = await axios.put(`/api/knowledge/${selectedKnowledge.id}/index/`);
       
       if (response.data.code === 200) {
         setSuccess(`知识库 ${selectedKnowledge.name} 索引重建成功`);

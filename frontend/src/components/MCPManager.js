@@ -10,9 +10,9 @@ import {
 } from '@mui/material';
 import { 
   Add, Delete, Refresh, ArrowBack, Edit, Check,
-  PlayArrow, PowerSettingsNew
+  PlayArrow, PowerSettingsNew, Sync
 } from '@mui/icons-material';
-import { fetchMCPServers, createMCPServer, updateMCPServer, testMCPServerConnection, fetchMCPServerStatuses } from '../api/index';
+import { fetchMCPServers, createMCPServer, updateMCPServer, testMCPServerConnection, fetchMCPServerStatuses, refreshMCPServerConnection } from '../api/index';
 
 // MCP服务器管理组件
 const MCPManager = () => {
@@ -41,6 +41,9 @@ const MCPManager = () => {
   // 删除确认
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [serverToDelete, setServerToDelete] = useState(null);
+
+  // 新增：为每个服务器维护独立的loading状态
+  const [serverLoadingStates, setServerLoadingStates] = useState({});
 
   // 加载MCP服务器列表
   const loadMcpServers = async () => {
@@ -81,12 +84,12 @@ const MCPManager = () => {
       // 首次加载状态
       loadServerStatuses();
       
-      // 设置定时器，每10秒刷新一次状态
-      const statusInterval = setInterval(() => {
-        loadServerStatuses();
-      }, 10000);
+      // // 设置定时器，每分钟刷新一次状态
+      // const statusInterval = setInterval(() => {
+      //   loadServerStatuses();
+      // }, 60000);
 
-      return () => clearInterval(statusInterval);
+      // return () => clearInterval(statusInterval);
     }
   }, [mcpServers]);
 
@@ -341,8 +344,19 @@ const MCPManager = () => {
 
   // 获取服务器状态
   const getServerStatus = (serverName) => {
-    return serverStatuses.find(status => status.name === serverName) || 
-           { active: false, connected: false, healthy: false };
+    // 找到服务器配置
+    const server = mcpServers.find(s => s.name === serverName);
+    // 找到服务器状态
+    const status = serverStatuses.find(status => status.name === serverName);
+    
+    // 返回合并的状态信息
+    return {
+      active: server ? server.active : false,  // 来自服务器配置
+      connected: status ? status.connected : false,  // 来自实际状态
+      healthy: status ? status.healthy : false,  // 来自实际状态
+      status: status ? status.status : 'unknown',  // 状态字符串
+      error_message: status ? status.error_message : null  // 错误信息
+    };
   };
 
   // 状态指示器组件
@@ -350,15 +364,17 @@ const MCPManager = () => {
     const { active, connected, healthy } = status;
     
     const getStatusColor = () => {
-      if (healthy) return '#4caf50'; // 绿色
-      if (connected) return '#ff9800'; // 橙色
-      return '#f44336'; // 红色
+      if (!active) return '#ccc'; // 灰色：未激活
+      if (healthy && connected) return '#4caf50'; // 绿色：激活且健康
+      if (connected) return '#ff9800'; // 橙色：激活且连接但不健康
+      return '#f44336'; // 红色：激活但未连接
     };
     
     const getStatusText = () => {
-      if (healthy) return '健康';
-      if (connected) return '已连接';
-      return '未连接';
+      if (!active) return '未激活';
+      if (healthy && connected) return '在线';
+      if (connected) return '连接异常';
+      return '离线';
     };
     
     return (
@@ -376,11 +392,11 @@ const MCPManager = () => {
         <Typography 
           variant="caption" 
           sx={{ 
-            color: active ? 'success.main' : 'text.disabled',
+            color: active ? (healthy && connected ? 'success.main' : 'warning.main') : 'text.disabled',
             fontSize: '0.75rem'
           }}
         >
-          {active ? '激活' : '未激活'}
+          {getStatusText()}
         </Typography>
       </Box>
     );
@@ -390,7 +406,20 @@ const MCPManager = () => {
   const StatusSummary = () => {
     const totalServers = mcpServers.length;
     const activeServers = mcpServers.filter(server => server.active).length;
-    const onlineServers = serverStatuses.filter(status => status.healthy || status.connected).length;
+    
+    // 修复：在线服务器应该是激活且实际连接的服务器
+    const onlineServers = serverStatuses.filter(status => {
+      // 找到对应的服务器配置
+      const server = mcpServers.find(s => s.name === status.name);
+      // 只有激活且实际连接健康的才算在线
+      return server && server.active && status.connected && status.healthy;
+    }).length;
+    
+    // 修复：激活但未连接的服务器数量
+    const activatedButOffline = serverStatuses.filter(status => {
+      const server = mcpServers.find(s => s.name === status.name);
+      return server && server.active && (!status.connected || !status.healthy);
+    }).length;
     
     return (
       <Paper sx={{ p: 2, mb: 2 }}>
@@ -408,9 +437,47 @@ const MCPManager = () => {
             <Typography variant="body2" color="text.secondary">在线:</Typography>
             <Chip label={onlineServers} size="small" color="success" />
           </Box>
+          {activatedButOffline > 0 && (
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+              <Typography variant="body2" color="text.secondary">离线:</Typography>
+              <Chip label={activatedButOffline} size="small" color="warning" />
+            </Box>
+          )}
         </Box>
       </Paper>
     );
+  };
+
+  // 重连单个服务器 - 修复独立loading状态
+  const refreshServerConnection = async (server) => {
+    if (!server) return;
+    
+    // 设置该服务器的loading状态
+    setServerLoadingStates(prev => ({
+      ...prev,
+      [server.id]: true
+    }));
+    setError(null);
+    
+    try {
+      const response = await refreshMCPServerConnection(server.id);
+      
+      if (response.success || response.code === 200) {
+        setSuccess(`服务器 "${server.name}" 重连成功！`);
+        // 刷新服务器状态
+        loadServerStatuses();
+      } else {
+        setError(`服务器 "${server.name}" 重连失败：` + (response.message || '未知错误'));
+      }
+    } catch (err) {
+      setError(`服务器 "${server.name}" 重连失败：` + (err.response?.data?.detail || err.message));
+    } finally {
+      // 清除该服务器的loading状态
+      setServerLoadingStates(prev => ({
+        ...prev,
+        [server.id]: false
+      }));
+    }
   };
 
   // 渲染主界面
@@ -469,20 +536,21 @@ const MCPManager = () => {
                 </Button>
                 <Button 
                   variant="outlined"
+                  color="info"
+                  sx={{ mr: 1 }}
+                  startIcon={<Sync />}
+                  onClick={() => testConnection(selectedServer)}
+                >
+                  测试连接
+                </Button>
+                <Button 
+                  variant="outlined"
                   color="secondary"
                   sx={{ mr: 1 }}
                   startIcon={<Delete />}
                   onClick={() => openDeleteDialog(selectedServer)}
                 >
                   删除
-                </Button>
-                <Button 
-                  variant="outlined"
-                  color="info"
-                  startIcon={<PlayArrow />}
-                  onClick={() => testConnection(selectedServer)}
-                >
-                  测试连接
                 </Button>
               </>
             )}
@@ -547,33 +615,67 @@ const MCPManager = () => {
                       <ListItem 
                         button 
                         onClick={() => selectServer(server)}
-                        selected={selectedServer?.id === server.id}
+                        sx={{ 
+                          borderLeft: selectedServer?.id === server.id ? '4px solid #1976d2' : 'none',
+                          backgroundColor: selectedServer?.id === server.id ? 'rgba(25, 118, 210, 0.08)' : 'transparent'
+                        }}
                       >
-                        <ListItemText 
+                        <ListItemText
                           primary={
                             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                              {server.name}
+                              <Typography variant="subtitle1">{server.name}</Typography>
                               <StatusIndicator status={getServerStatus(server.name)} />
                             </Box>
-                          } 
-                          secondary={
-                            <React.Fragment>
-                              <Typography component="span" variant="body2" color="textPrimary">
-                                {server.url}
-                              </Typography>
-                              <br />
-                              {server.description}
-                            </React.Fragment>
-                          } 
+                          }
+                          secondary={server.description || '无描述'}
                         />
+                        
                         <ListItemSecondaryAction>
                           <Tooltip title={server.active ? '已启用' : '已禁用'}>
                             <IconButton 
                               edge="end" 
                               color={server.active ? 'success' : 'default'}
                               onClick={() => toggleServerStatus(server, !server.active)}
+                              disabled={loading} // 只有全局操作时才禁用
                             >
                               <PowerSettingsNew />
+                            </IconButton>
+                          </Tooltip>
+                          <Tooltip title={
+                            !server.active 
+                              ? "服务器未激活" 
+                              : getServerStatus(server.name).connected && getServerStatus(server.name).healthy
+                                ? "服务器运行正常" 
+                                : "服务器连接异常，点击重连"
+                          }>
+                            <IconButton 
+                              edge="end" 
+                              color={
+                                !server.active 
+                                  ? "default" 
+                                  : getServerStatus(server.name).connected && getServerStatus(server.name).healthy
+                                    ? "success" 
+                                    : "warning"
+                              }
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                // 只有在连接异常时才执行重连
+                                const status = getServerStatus(server.name);
+                                if (server.active && (!status.connected || !status.healthy)) {
+                                  refreshServerConnection(server);
+                                }
+                              }}
+                              disabled={
+                                !server.active || 
+                                serverLoadingStates[server.id] || // 使用该服务器的独立loading状态
+                                (getServerStatus(server.name).connected && getServerStatus(server.name).healthy)
+                              }
+                            >
+                              {serverLoadingStates[server.id] ? (
+                                <CircularProgress size={20} />
+                              ) : (
+                                <Sync />
+                              )}
                             </IconButton>
                           </Tooltip>
                           <Tooltip title="编辑">
@@ -584,6 +686,7 @@ const MCPManager = () => {
                                 selectServer(server);
                                 startEditMode();
                               }}
+                              disabled={loading} // 只有全局操作时才禁用
                             >
                               <Edit />
                             </IconButton>
@@ -591,11 +694,11 @@ const MCPManager = () => {
                           <Tooltip title="删除">
                             <IconButton 
                               edge="end" 
-                              color="error"
                               onClick={(e) => {
                                 e.stopPropagation();
                                 openDeleteDialog(server);
                               }}
+                              disabled={loading} // 只有全局操作时才禁用
                             >
                               <Delete />
                             </IconButton>

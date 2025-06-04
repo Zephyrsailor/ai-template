@@ -1,0 +1,72 @@
+{
+  "common": {
+    "success": "Operation successful",
+    "error": "Operation failed",
+    "not_found": "Resource not found",
+    "unauthorized": "Unauthorized operation",
+    "forbidden": "Insufficient permissions",
+    "bad_request": "Invalid request parameters",
+    "internal_error": "Internal server error"
+  },
+  "auth": {
+    "login_success": "Login successful",
+    "login_failed": "Invalid username or password",
+    "logout_success": "Logout successful",
+    "token_invalid": "Token is invalid or expired",
+    "password_incorrect": "Incorrect password"
+  },
+  "user": {
+    "created": "User created successfully",
+    "updated": "User information updated successfully",
+    "deleted": "User deleted successfully",
+    "not_found": "User not found",
+    "already_exists": "User already exists"
+  },
+  "knowledge": {
+    "created": "Knowledge base created successfully",
+    "updated": "Knowledge base updated successfully",
+    "deleted": "Knowledge base {kb_id} deleted",
+    "not_found": "Knowledge base not found",
+    "query_success": "Query successful",
+    "query_failed": "Knowledge base query failed: {error}",
+    "index_rebuild_success": "Index rebuild successful",
+    "index_rebuild_failed": "Index rebuild failed: {error}",
+    "file_uploaded": "File uploaded successfully",
+    "file_deleted": "File {filename} deleted from knowledge base {kb_id}",
+    "file_not_found": "File not found"
+  },
+  "conversation": {
+    "created": "Conversation created successfully",
+    "updated": "Conversation updated successfully",
+    "deleted": "Conversation {conversation_id} deleted",
+    "not_found": "Conversation {conversation_id} not found"
+  },
+  "chat": {
+    "success": "Chat successful",
+    "failed": "Chat processing failed: {error}",
+    "stopped": "Chat stopped"
+  },
+  "mcp": {
+    "server_created": "MCP server created successfully",
+    "server_updated": "MCP server updated successfully",
+    "server_deleted": "MCP server deleted successfully",
+    "server_not_found": "MCP server not found",
+    "tool_call_success": "Tool call successful",
+    "tool_call_failed": "Tool call failed: {error}"
+  },
+  "file": {
+    "upload_success": "File uploaded successfully",
+    "upload_failed": "File upload failed: {error}",
+    "delete_success": "File deleted successfully",
+    "delete_failed": "File deletion failed: {error}",
+    "not_found": "File not found",
+    "too_large": "File too large",
+    "type_not_supported": "Unsupported file type"
+  },
+  "validation": {
+    "required": "{field} is required",
+    "invalid_format": "{field} format is invalid",
+    "too_long": "{field} is too long",
+    "too_short": "{field} is too short"
+  }
+} 

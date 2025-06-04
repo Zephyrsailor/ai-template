@@ -1,0 +1,72 @@
+{
+  "common": {
+    "success": "操作成功",
+    "error": "操作失败",
+    "not_found": "资源不存在",
+    "unauthorized": "未授权操作",
+    "forbidden": "权限不足",
+    "bad_request": "请求参数错误",
+    "internal_error": "服务器内部错误"
+  },
+  "auth": {
+    "login_success": "登录成功",
+    "login_failed": "用户名或密码错误",
+    "logout_success": "退出成功",
+    "token_invalid": "令牌无效或已过期",
+    "password_incorrect": "密码错误"
+  },
+  "user": {
+    "created": "用户创建成功",
+    "updated": "用户信息更新成功",
+    "deleted": "用户删除成功",
+    "not_found": "用户不存在",
+    "already_exists": "用户已存在"
+  },
+  "knowledge": {
+    "created": "知识库创建成功",
+    "updated": "知识库更新成功",
+    "deleted": "知识库 {kb_id} 已删除",
+    "not_found": "知识库不存在",
+    "query_success": "查询成功",
+    "query_failed": "查询知识库失败: {error}",
+    "index_rebuild_success": "索引重建成功",
+    "index_rebuild_failed": "重建索引失败: {error}",
+    "file_uploaded": "文件上传成功",
+    "file_deleted": "文件 {filename} 已从知识库 {kb_id} 中删除",
+    "file_not_found": "文件不存在"
+  },
+  "conversation": {
+    "created": "会话创建成功",
+    "updated": "会话更新成功",
+    "deleted": "会话 {conversation_id} 已删除",
+    "not_found": "会话 {conversation_id} 不存在"
+  },
+  "chat": {
+    "success": "聊天成功",
+    "failed": "聊天处理失败: {error}",
+    "stopped": "聊天已停止"
+  },
+  "mcp": {
+    "server_created": "MCP服务器创建成功",
+    "server_updated": "MCP服务器更新成功",
+    "server_deleted": "MCP服务器删除成功",
+    "server_not_found": "MCP服务器不存在",
+    "tool_call_success": "工具调用成功",
+    "tool_call_failed": "工具调用失败: {error}"
+  },
+  "file": {
+    "upload_success": "文件上传成功",
+    "upload_failed": "文件上传失败: {error}",
+    "delete_success": "文件删除成功",
+    "delete_failed": "文件删除失败: {error}",
+    "not_found": "文件不存在",
+    "too_large": "文件过大",
+    "type_not_supported": "不支持的文件类型"
+  },
+  "validation": {
+    "required": "{field}不能为空",
+    "invalid_format": "{field}格式不正确",
+    "too_long": "{field}长度过长",
+    "too_short": "{field}长度过短"
+  }
+} 

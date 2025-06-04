@@ -1,7 +1,15 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import styled from 'styled-components';
-import { FaSearch, FaServer } from 'react-icons/fa';
+import { FaSearch, FaServer, FaSync } from 'react-icons/fa';
 import { fetchMCPServers } from '../api';
+
+// 添加旋转动画的CSS
+const GlobalStyle = styled.div`
+  @keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+`;
 
 // 样式定义
 const ServerContainer = styled.div`
@@ -208,27 +216,48 @@ const MCPServerSelector = ({ selectedServers = [], onChange }) => {
   }, [onChange, selectedServers]);
   
   // 加载MCP服务器
-  useEffect(() => {
-    const loadMCPServers = async () => {
-      setLoading(true);
-      try {
-        const data = await fetchMCPServers();
-        if (data?.code === 200 && Array.isArray(data.data)) {
-          setServers(data.data);
-        } else {
-          console.error('MCP servers data is not in expected format:', data);
-          setServers([]);
-        }
-      } catch (error) {
-        console.error('Failed to load MCP servers:', error);
+  const loadMCPServers = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await fetchMCPServers(true);
+      if (data?.code === 200 && Array.isArray(data.data)) {
+        setServers(data.data);
+      } else {
+        console.error('MCP servers data is not in expected format:', data);
         setServers([]);
-      } finally {
-        setLoading(false);
       }
-    };
-    
-    loadMCPServers();
+    } catch (error) {
+      console.error('Failed to load MCP servers:', error);
+      setServers([]);
+    } finally {
+      setLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    loadMCPServers();
+  }, [loadMCPServers]);
+
+  // 监听设置页面关闭事件，自动刷新MCP服务器列表
+  useEffect(() => {
+    const handleSettingsClosed = (event) => {
+      console.log('设置页面已关闭，自动刷新MCP服务器列表', event.detail);
+      loadMCPServers();
+    };
+
+    // 添加事件监听器
+    window.addEventListener('settingsClosed', handleSettingsClosed);
+
+    // 清理函数
+    return () => {
+      window.removeEventListener('settingsClosed', handleSettingsClosed);
+    };
+  }, [loadMCPServers]);
+
+  // 手动刷新服务器列表
+  const handleRefresh = useCallback(() => {
+    loadMCPServers();
+  }, [loadMCPServers]);
   
   // 关闭下拉时点击外部
   useEffect(() => {
@@ -307,84 +336,112 @@ const MCPServerSelector = ({ selectedServers = [], onChange }) => {
   const checkboxIdPrefix = "mcp-server-";
   
   return (
-    <ServerContainer ref={dropdownRef}>
-      <ServerButton 
-        onClick={() => setIsOpen(!isOpen)}
-        active={isOpen || selected.length > 0}
-        title="选择MCP服务器"
-      >
-        <FaServer />
-        {selected.length > 0 && <BadgeCount>{selected.length}</BadgeCount>}
-      </ServerButton>
-      
-      {isOpen && (
-        <Dropdown>
-          <DropdownHeader>
-            MCP服务器
-            <small style={{ fontSize: '10px', color: '#888', marginLeft: '8px' }}>
-              已选: {selected.length}
-            </small>
-          </DropdownHeader>
-          
-          <SearchBox>
-            <SearchIcon>
-              <FaSearch size={14} />
-            </SearchIcon>
-            <SearchInput
-              placeholder="搜索服务器"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-            />
-          </SearchBox>
-          
-          {loading ? (
-            <LoadingState>加载中...</LoadingState>
-          ) : (
-            <>
-              {filteredServers.length > 0 ? (
-                <ServerList>
-                  <SelectAllLabel>
-                    <CheckboxInput 
-                      id={`${checkboxIdPrefix}select-all`}
-                      type="checkbox"
-                      checked={isAllSelected}
-                      onChange={(e) => handleSelectAll(e.target.checked)}
-                    />
-                    <span>全选</span>
-                  </SelectAllLabel>
-                  
-                  {filteredServers.map(server => (
-                    <ServerItem key={server.id}>
+    <GlobalStyle>
+      <ServerContainer ref={dropdownRef}>
+        <ServerButton 
+          onClick={() => setIsOpen(!isOpen)}
+          active={isOpen || selected.length > 0}
+          title="选择MCP服务器"
+        >
+          <FaServer />
+          {selected.length > 0 && <BadgeCount>{selected.length}</BadgeCount>}
+        </ServerButton>
+        
+        {isOpen && (
+          <Dropdown>
+            <DropdownHeader>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+                <div>
+                  MCP服务器
+                  <small style={{ fontSize: '10px', color: '#888', marginLeft: '8px' }}>
+                    已选: {selected.length}
+                  </small>
+                </div>
+                <button
+                  onClick={handleRefresh}
+                  disabled={loading}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    color: '#666',
+                    cursor: loading ? 'not-allowed' : 'pointer',
+                    padding: '4px',
+                    borderRadius: '4px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    fontSize: '12px'
+                  }}
+                  title="刷新服务器列表"
+                >
+                  <FaSync style={{ 
+                    marginRight: '4px', 
+                    animation: loading ? 'spin 1s linear infinite' : 'none' 
+                  }} />
+                  刷新
+                </button>
+              </div>
+            </DropdownHeader>
+            
+            <SearchBox>
+              <SearchIcon>
+                <FaSearch size={14} />
+              </SearchIcon>
+              <SearchInput
+                placeholder="搜索服务器"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+            </SearchBox>
+            
+            {loading ? (
+              <LoadingState>加载中...</LoadingState>
+            ) : (
+              <>
+                {filteredServers.length > 0 ? (
+                  <ServerList>
+                    <SelectAllLabel>
                       <CheckboxInput 
-                        id={`${checkboxIdPrefix}${server.id}`}
+                        id={`${checkboxIdPrefix}select-all`}
                         type="checkbox"
-                        checked={selected.includes(server.id)}
-                        onChange={(e) => handleCheckboxChange(server.id, e.target.checked)}
+                        checked={isAllSelected}
+                        onChange={(e) => handleSelectAll(e.target.checked)}
                       />
-                      <ServerInfo>
-                        <ServerName>
-                          {server.name}
-                          <StatusIndicator active={server.active} />
-                        </ServerName>
-                        {server.description && (
-                          <ServerDescription>{server.description}</ServerDescription>
-                        )}
-                      </ServerInfo>
-                    </ServerItem>
-                  ))}
-                </ServerList>
-              ) : (
-                <EmptyState>
-                  {Array.isArray(servers) && servers.length === 0 
-                    ? "没有可用的MCP服务器" 
-                    : "无搜索结果"}
-                </EmptyState>
-              )}
-            </>
-          )}
-        </Dropdown>
-      )}
-    </ServerContainer>
+                      <span>全选</span>
+                    </SelectAllLabel>
+                    
+                    {filteredServers.map(server => (
+                      <ServerItem key={server.id}>
+                        <CheckboxInput 
+                          id={`${checkboxIdPrefix}${server.id}`}
+                          type="checkbox"
+                          checked={selected.includes(server.id)}
+                          onChange={(e) => handleCheckboxChange(server.id, e.target.checked)}
+                        />
+                        <ServerInfo>
+                          <ServerName>
+                            {server.name}
+                            <StatusIndicator active={server.active} />
+                          </ServerName>
+                          {server.description && (
+                            <ServerDescription>{server.description}</ServerDescription>
+                          )}
+                        </ServerInfo>
+                      </ServerItem>
+                    ))}
+                  </ServerList>
+                ) : (
+                  <EmptyState>
+                    {Array.isArray(servers) && servers.length === 0 
+                      ? "没有可用的MCP服务器" 
+                      : "无搜索结果"}
+                  </EmptyState>
+                )}
+              </>
+            )}
+          </Dropdown>
+        )}
+      </ServerContainer>
+    </GlobalStyle>
   );
 };
 

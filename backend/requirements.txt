@@ -1,7 +1,127 @@
-fastapi
-uvicorn[standard]  # ASGI server
-openai>=1.0        # OpenAI/DeepSeek client library
-python-dotenv      # For loading .env file
-pydantic-settings>=2.0.0
-aiohttp            # For Ollama HTTP client
-google-generativeai  # For Gemini APIanthropic
+# =====================================================
+# AI Template 项目依赖文件
+# 包含所有基础依赖和知识库处理相关依赖
+# =====================================================
+
+# =====================================================
+# 核心框架依赖
+# =====================================================
+fastapi>=0.104.0                    # Web框架
+uvicorn[standard]>=0.24.0           # ASGI服务器
+pydantic>=2.5.0                     # 数据验证
+pydantic-settings>=2.1.0            # 配置管理
+
+# =====================================================
+# 数据库相关
+# =====================================================
+sqlalchemy>=2.0.0                   # ORM框架
+alembic>=1.13.0                     # 数据库迁移
+asyncpg>=0.29.0                     # PostgreSQL异步驱动
+aiomysql>=0.2.0                     # MySQL异步驱动
+aiosqlite>=0.19.0                   # SQLite异步驱动
+pymysql>=1.1.0                      # MySQL同步驱动（用于迁移脚本）
+
+# =====================================================
+# LLM API客户端
+# =====================================================
+openai>=1.6.0                       # OpenAI/DeepSeek客户端
+anthropic>=0.8.0                    # Anthropic Claude客户端
+google-generativeai>=0.3.0          # Google Gemini客户端
+aiohttp>=3.9.0                      # HTTP客户端（Ollama等）
+
+# =====================================================
+# 知识库和文档处理
+# =====================================================
+chromadb>=0.4.18                    # 向量数据库
+sentence-transformers>=2.2.2        # 文本嵌入模型
+
+# LlamaIndex核心和扩展包
+llama-index-core>=0.10.0            # LlamaIndex核心包
+llama-index-vector-stores-chroma>=0.1.0  # ChromaDB向量存储
+llama-index-embeddings-ollama>=0.1.0     # Ollama嵌入模型
+llama-index-embeddings-openai>=0.1.0     # OpenAI嵌入模型
+llama-index-embeddings-huggingface>=0.2.0 # HuggingFace嵌入模型
+llama-index-llms-ollama>=0.1.0           # Ollama LLM
+llama-index-llms-openai>=0.1.0           # OpenAI LLM
+llama-index-readers-file>=0.1.0          # 文件读取器
+
+# 文档处理依赖
+unstructured[pdf]>=0.11.0           # 文档解析（包含PDF支持）
+unstructured[docx]>=0.11.0          # Word文档支持
+unstructured[pptx]>=0.11.0          # PowerPoint支持
+unstructured[xlsx]>=0.11.0          # Excel支持
+unstructured[md]>=0.11.0            # Markdown支持
+python-docx>=1.1.0                  # Word文档处理
+docx2txt>=0.8                       # Word文档文本提取（LlamaIndex依赖）
+openpyxl>=3.1.0                     # Excel文档处理
+python-pptx>=0.6.23                 # PowerPoint文档处理
+PyPDF2>=3.0.1                       # PDF处理备选方案
+pdfplumber>=0.10.0                  # PDF文本提取
+markdown>=3.5.0                     # Markdown处理
+beautifulsoup4>=4.12.0              # HTML解析
+lxml>=4.9.0                         # XML/HTML解析器
+
+# =====================================================
+# 文件处理和存储
+# =====================================================
+python-multipart>=0.0.6             # 文件上传支持
+aiofiles>=23.2.0                    # 异步文件操作
+pillow>=10.1.0                      # 图像处理
+python-magic>=0.4.27                # 文件类型检测
+
+# =====================================================
+# 认证和安全
+# =====================================================
+python-jose[cryptography]>=3.3.0    # JWT处理
+passlib[bcrypt]>=1.7.4              # 密码哈希
+cryptography>=41.0.0                # 加密库
+
+# =====================================================
+# 工具和实用程序
+# =====================================================
+python-dotenv>=1.0.0                # 环境变量加载
+pyyaml>=6.0.1                       # YAML配置文件
+toml>=0.10.2                        # TOML配置文件
+click>=8.1.0                        # 命令行工具
+rich>=13.7.0                        # 终端美化输出
+loguru>=0.7.0                       # 日志库
+
+# =====================================================
+# HTTP和网络
+# =====================================================
+httpx>=0.25.0                       # 现代HTTP客户端
+requests>=2.31.0                    # HTTP请求库
+websockets>=12.0                    # WebSocket支持
+
+# =====================================================
+# 数据处理
+# =====================================================
+pandas>=2.1.0                       # 数据分析
+numpy>=1.24.0                       # 数值计算
+scikit-learn>=1.3.0                 # 机器学习工具
+
+# =====================================================
+# 开发和测试工具
+# =====================================================
+pytest>=7.4.0                       # 测试框架
+pytest-asyncio>=0.21.0              # 异步测试支持
+pytest-cov>=4.1.0                   # 测试覆盖率
+black>=23.0.0                       # 代码格式化
+isort>=5.12.0                       # 导入排序
+flake8>=6.0.0                       # 代码检查
+mypy>=1.7.0                         # 类型检查
+
+# =====================================================
+# 性能和监控
+# =====================================================
+psutil>=5.9.0                       # 系统监控
+memory-profiler>=0.61.0             # 内存分析
+
+# =====================================================
+# 可选依赖（根据需要启用）
+# =====================================================
+# redis>=5.0.0                      # Redis缓存
+# celery>=5.3.0                     # 任务队列
+# flower>=2.0.0                     # Celery监控
+# prometheus-client>=0.19.0         # 指标监控
+# sentry-sdk[fastapi]>=1.38.0       # 错误追踪

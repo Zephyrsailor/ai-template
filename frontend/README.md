@@ -50,3 +50,5 @@ npm run build
 - 修改`src/components`中的组件以定制UI
 - 在`ChatInterface.js`中更改API端点URL以连接到不同的后端服务器
 - 调整样式和主题颜色以匹配您的品牌 
+
+sk-07c13c601c3348a98d6db5bcbb11cf37
