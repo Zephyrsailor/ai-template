@@ -62,7 +62,7 @@ class ChatContextBuilder:
             return None
             
         try:
-            knowledge_results = self.knowledge_service.query_multiple(
+            knowledge_results = await self.knowledge_service.query_multiple(
                 request.knowledge_base_ids,
                 request.message,
                 top_k=ChatConstants.KNOWLEDGE_TOP_K,
@@ -621,25 +621,7 @@ class ChatService:
                                       stop_key: Optional[str]) -> AsyncGenerator[StreamEvent, None]:
         """执行单次聊天迭代（添加工具调用安全检查）"""
         has_tool_call = False
-        tool_call_json = None
-        
-        # 🔥 工具调用前的安全检查
-        if context.tools:
-            try:
-                max_tokens = await self._get_user_max_tokens(request)
-                is_safe, safety_message = ChatContextHelper.check_tool_safety(
-                    messages=context.messages,
-                    max_tokens=max_tokens,
-                    tools_count=len(context.tools)
-                )
-                
-                if not is_safe:
-                    logger.warning(f"工具调用安全检查: {safety_message}")
-                    # 可以选择优化上下文或减少工具数量
-                    # 这里选择继续，但记录警告
-                    
-            except Exception as e:
-                logger.error(f"工具调用安全检查失败: {str(e)}")
+        tool_call_json = None        
         
         # 重置本轮状态
         iteration_state.collected_thinking = ""
@@ -731,10 +713,6 @@ class ChatService:
         if self._is_stopped(stop_key):
             return
         
-        # 添加助手消息到上下文
-        content = iteration_state.collected_content or "好的，我将使用ReAct过程来回答。"
-        context.messages.append({"role": "assistant", "content": content})
-        
         # 执行工具调用
         tool_results = await self._execute_tool_calls(tool_call_json)
         
@@ -748,22 +726,31 @@ class ChatService:
         try:
             for result in tool_results:
                 if result.type == EventType.TOOL_RESULT:
+                    # 深度序列化result数据，确保没有不可序列化的对象
+                    result_data = result.data.get("result", {})
+                    serialized_result = self._deep_serialize_for_json(result_data)
+                    
                     iteration_state.collected_tool_calls.append({
                         "id": result.data.get("id", ""),
                         "name": result.data.get("name", ""),
                         "arguments": result.data.get("arguments", {}),
-                        "result": result.data.get("result", {}),
+                        "result": serialized_result,
                         "error": result.data.get("error", "")
                     })
         except Exception as e:
             logger.warning(f"处理工具调用数据时出错: {str(e)}")
         
-        # 构建观察结果并添加到上下文
+        # 构建观察结果并添加到上下文 - 使用assistant角色而不是tool角色
         observation = self._build_observation_message(tool_results)
-        context.messages.append({
-            "role": "user", 
-            "content": observation if observation else "没有工具调用结果"
-        })
+        
+        # 为了兼容OpenAI API，我们将工具调用结果作为assistant消息添加
+        # 而不是使用tool角色，因为我们使用的是ReAct模式而非Function Calling
+        assistant_message = {
+            "role": "assistant", 
+            "content": f"工具调用结果：\n{observation}" if observation else "工具调用完成，但没有返回结果。"
+        }
+        
+        context.messages.append(assistant_message)
 
     async def _send_references(self, request: ChatRequest, context: ChatContext) -> AsyncGenerator[StreamEvent, None]:
         """发送引用信息"""
@@ -1286,3 +1273,44 @@ class ChatService:
             logger.error(f"内容清理失败: {str(e)}")
             # 返回简化的内容，确保至少能保存基本文本
             return content.replace('\u0000', '').strip()
+    
+    def _deep_serialize_for_json(self, obj: Any) -> Any:
+        """深度序列化对象，确保所有内容都可以JSON序列化"""
+        if obj is None:
+            return None
+        
+        # 处理基本类型
+        if isinstance(obj, (str, int, float, bool)):
+            return obj
+        
+        # 处理列表
+        if isinstance(obj, list):
+            return [self._deep_serialize_for_json(item) for item in obj]
+        
+        # 处理字典
+        if isinstance(obj, dict):
+            return {key: self._deep_serialize_for_json(value) for key, value in obj.items()}
+        
+        # 处理具有text属性的对象（如TextContent）
+        if hasattr(obj, 'text'):
+            return {
+                "type": "text",
+                "text": str(obj.text)
+            }
+        
+        # 处理具有url属性的对象（如ImageContent）
+        if hasattr(obj, 'url'):
+            return {
+                "type": "image", 
+                "url": str(obj.url)
+            }
+        
+        # 处理其他对象，尝试转换为字典
+        if hasattr(obj, '__dict__'):
+            try:
+                return self._deep_serialize_for_json(obj.__dict__)
+            except:
+                return str(obj)
+        
+        # 最后的回退，转换为字符串
+        return str(obj)

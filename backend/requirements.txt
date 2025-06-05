@@ -60,6 +60,7 @@ pdfplumber>=0.10.0                  # PDF文本提取
 markdown>=3.5.0                     # Markdown处理
 beautifulsoup4>=4.12.0              # HTML解析
 lxml>=4.9.0                         # XML/HTML解析器
+docx2txt>=0.8                       # Word文档文本提取（LlamaIndex依赖）
 
 # =====================================================
 # 文件处理和存储

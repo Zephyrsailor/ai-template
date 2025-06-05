@@ -237,7 +237,6 @@ async def get_chat_service(
     # 惰性导入ChatService，避免循环依赖
     from ..services.chat import ChatService
     from ..services.knowledge import KnowledgeService
-    from ..services.mcp import MCPService
     from ..services.conversation import ConversationService
     from ..services.user_llm_config import UserLLMConfigService
     

@@ -968,16 +968,14 @@ class MCPService(BaseService[MCPServer, MCPRepository]):
                     "content": []
                 }
             
-            # 尝试找到原始工具名称
-            actual_tool_name = await self._resolve_tool_name(user_id, tool_name)
-            if not actual_tool_name:
-                error_msg = f"找不到工具: {tool_name}"
-                logger.error(error_msg)
-                return {
-                    "success": False,
-                    "error": error_msg,
-                    "content": []
-                }
+            # 🔥 简化工具名称解析：如果是server_toolname格式，提取toolname
+            actual_tool_name = tool_name
+            if '_' in tool_name and not tool_name.startswith('temp_'):
+                # 假设格式是 server_toolname，提取 toolname 部分
+                parts = tool_name.split('_', 1)
+                if len(parts) == 2:
+                    actual_tool_name = parts[1]
+                    logger.info(f"工具名称转换: {tool_name} -> {actual_tool_name}")
             
             # 添加超时控制
             result = await asyncio.wait_for(

@@ -149,25 +149,32 @@ class MCPTool(BaseModel):
         """转换为标准Tool模型"""
         from ..schemas.tools import Tool, ToolParameter
         
-        # 转换parameters
-        tool_parameters = {}
+        # 转换parameters为列表格式
+        tool_parameters = []
         if self.input_schema and "properties" in self.input_schema:
             properties = self.input_schema["properties"]
             required_fields = self.input_schema.get("required", [])
             
             for param_name, param_def in properties.items():
-                tool_parameters[param_name] = ToolParameter(
+                parameter = ToolParameter(
+                    name=param_name,  # 添加name字段
                     type=param_def.get("type", "string"),
                     description=param_def.get("description", ""),
                     required=param_name in required_fields,
                     enum=param_def.get("enum"),
                     default=param_def.get("default")
                 )
+                tool_parameters.append(parameter)
+        
+        # 生成唯一ID
+        tool_id = f"{self.server_id or 'unknown'}_{self.name}" if self.server_id else f"mcp_{self.name}"
         
         return Tool(
+            id=tool_id,  # 添加必需的ID字段
             name=self.name,
             description=self.description,
-            parameters=tool_parameters
+            server=self.server_name,  # 添加服务器信息
+            parameters=tool_parameters  # 使用列表格式
         )
     
     @classmethod
@@ -180,7 +187,8 @@ class MCPTool(BaseModel):
             "required": []
         }
         
-        for param_name, param in tool.parameters.items():
+        # tool.parameters现在是List[ToolParameter]格式
+        for param in tool.parameters:
             prop = {
                 "type": param.type,
                 "description": param.description
@@ -190,10 +198,10 @@ class MCPTool(BaseModel):
             if param.default is not None:
                 prop["default"] = param.default
                 
-            input_schema["properties"][param_name] = prop
+            input_schema["properties"][param.name] = prop
             
             if param.required:
-                input_schema["required"].append(param_name)
+                input_schema["required"].append(param.name)
         
         return cls(
             name=tool.name,

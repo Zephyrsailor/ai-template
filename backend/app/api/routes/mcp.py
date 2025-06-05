@@ -318,6 +318,21 @@ async def test_server_connection(
     except Exception as e:
         return api_response(code=500, message=f"测试服务器连接失败: {str(e)}")
 
+@router.get("/servers/{server_id}/status", response_model=ApiResponse[MCPServerStatus])
+async def get_server_status(
+    server_id: str = Path(..., description="服务器ID"),
+    current_user: User = Depends(get_current_user),
+    mcp_service: MCPService = Depends(get_mcp_service)
+):
+    """获取单个服务器的详细状态"""
+    try:
+        status = await mcp_service.get_server_status(server_id, current_user.id)
+        return api_response(data=status, message="获取服务器状态成功")
+    except NotFoundException as e:
+        return api_response(code=404, message=str(e))
+    except Exception as e:
+        return api_response(code=500, message=f"获取服务器状态失败: {str(e)}")
+
 # === 工具管理API ===
 
 @router.get("/tools", response_model=ToolListResponse)

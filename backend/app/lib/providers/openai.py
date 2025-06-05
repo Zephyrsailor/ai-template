@@ -390,10 +390,23 @@ class OpenAIProvider(BaseProvider):
         # 处理用户和助手消息
         for msg in messages:
             if isinstance(msg, dict) and \
-               msg.get('role') in ['user', 'assistant'] and \
+               msg.get('role') in ['user', 'assistant', 'tool'] and \
                isinstance(msg.get('content'), str) and \
                msg['content'].strip():
-                request_messages.append({"role": msg['role'], "content": msg['content']})
+                
+                # 构建消息对象
+                message = {"role": msg['role'], "content": msg['content']}
+                
+                # 如果是tool角色的消息，必须包含tool_call_id
+                if msg.get('role') == 'tool':
+                    if 'tool_call_id' in msg:
+                        message['tool_call_id'] = msg['tool_call_id']
+                    else:
+                        # 跳过没有tool_call_id的tool消息
+                        print(f"跳过缺少tool_call_id的tool消息: {msg.get('content', '')[:50]}...")
+                        continue
+                
+                request_messages.append(message)
                 
         return request_messages
     
@@ -418,6 +431,7 @@ class OpenAIProvider(BaseProvider):
             
             # 验证工具调用格式
             if isinstance(tool_call, dict) and "tool_name" in tool_call:
+                # 🔥 简化：直接使用工具名称，不需要复杂映射
                 return {
                     "tool_name": tool_call.get("tool_name"),
                     "arguments": tool_call.get("arguments", {})

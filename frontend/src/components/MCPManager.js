@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import axios from '../api/http';
 import { 
   Container, Box, Typography, TextField, Button, List, ListItem, 
@@ -6,13 +6,24 @@ import {
   Paper, CircularProgress, Grid, Chip, Dialog, DialogTitle,
   DialogContent, DialogContentText, DialogActions, Alert,
   Card, CardContent, Tooltip, Radio, RadioGroup, FormControlLabel, FormControl,
-  FormLabel, Tab, Tabs
+  FormLabel, Tab, Tabs, Badge, LinearProgress, Switch
 } from '@mui/material';
 import { 
   Add, Delete, Refresh, ArrowBack, Edit, Check,
-  PlayArrow, PowerSettingsNew, Sync
+  PlayArrow, PowerSettingsNew, Sync, Science, CheckCircle, Error,
+  Warning, Circle, Visibility, VisibilityOff, Code, Storage, Psychology, Stop
 } from '@mui/icons-material';
-import { fetchMCPServers, createMCPServer, updateMCPServer, testMCPServerConnection, fetchMCPServerStatuses, refreshMCPServerConnection } from '../api/index';
+import { 
+  fetchMCPServers, 
+  createMCPServer, 
+  updateMCPServer, 
+  testMCPServerConnection, 
+  fetchMCPServerStatuses, 
+  refreshMCPServerConnection, 
+  connectMCPServer, 
+  disconnectMCPServer, 
+  getMCPServerStatus 
+} from '../api/index';
 
 // MCP服务器管理组件
 const MCPManager = () => {
@@ -20,10 +31,134 @@ const MCPManager = () => {
   const [mcpServers, setMcpServers] = useState([]);
   const [serverStatuses, setServerStatuses] = useState([]);
   const [selectedServer, setSelectedServer] = useState(null);
+  const [createMode, setCreateMode] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
-  
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [serverToDelete, setServerToDelete] = useState(null);
+  const [serverLoadingStates, setServerLoadingStates] = useState({}); // 每个服务器的独立loading状态
+  const [autoRefresh, setAutoRefresh] = useState(true); // 自动刷新开关
+  const [refreshInterval, setRefreshInterval] = useState(null);
+
+  // 表单状态
+  const [formData, setFormData] = useState({
+    name: '',
+    transport: 'stdio',
+    command: '',
+    args: '',
+    env: '',
+    url: '',
+    active: true
+  });
+
+  // 获取服务器状态的颜色和图标
+  const getStatusDisplay = useCallback((status) => {
+    if (!status) {
+      return {
+        color: 'default',
+        icon: <Circle />,
+        text: '未知',
+        description: '状态未知'
+      };
+    }
+
+    // 检查服务器是否激活（从服务器配置中获取）
+    const server = mcpServers.find(s => s.id === status.server_id);
+    if (!server || !server.active) {
+      return {
+        color: 'default',
+        icon: <Circle />,
+        text: '未激活',
+        description: '服务器未激活'
+      };
+    }
+
+    if (status.connected && status.healthy) {
+      return {
+        color: 'success',
+        icon: <CheckCircle />,
+        text: '已连接',
+        description: '连接正常'
+      };
+    }
+
+    if (status.status === 'connecting') {
+      return {
+        color: 'info',
+        icon: <CircularProgress size={16} />,
+        text: '连接中',
+        description: '正在建立连接'
+      };
+    }
+
+    if (status.connected && !status.healthy) {
+      return {
+        color: 'warning',
+        icon: <Warning />,
+        text: '连接异常',
+        description: status.error_message || '连接不稳定'
+      };
+    }
+
+    return {
+      color: 'error',
+      icon: <Error />,
+      text: '连接失败',
+      description: status.error_message || '无法连接到服务器'
+    };
+  }, [mcpServers]);
+
+  // 获取单个服务器状态
+  const getServerStatus = useCallback((serverId) => {
+    return serverStatuses.find(s => s.server_id === serverId) || {};
+  }, [serverStatuses]);
+
+  // 加载服务器列表
+  const loadMcpServers = useCallback(async () => {
+    try {
+      const response = await fetchMCPServers();
+      if (response.success) {
+        setMcpServers(response.data || []);
+      }
+    } catch (err) {
+      console.error('加载MCP服务器失败:', err);
+      setError('加载服务器列表失败：' + (err.response?.data?.detail || err.message));
+    }
+  }, []);
+
+  // 加载服务器状态
+  const loadServerStatuses = useCallback(async () => {
+    try {
+      const response = await fetchMCPServerStatuses();
+      if (response.success) {
+        setServerStatuses(response.data || []);
+      }
+    } catch (err) {
+      console.error('加载服务器状态失败:', err);
+    }
+  }, []);
+
+  // 自动刷新逻辑
+  useEffect(() => {
+    if (autoRefresh) {
+      const interval = setInterval(() => {
+        loadServerStatuses();
+      }, 5000); // 每5秒刷新一次状态
+      setRefreshInterval(interval);
+      return () => clearInterval(interval);
+    } else if (refreshInterval) {
+      clearInterval(refreshInterval);
+      setRefreshInterval(null);
+    }
+  }, [autoRefresh, loadServerStatuses]);
+
+  // 初始加载
+  useEffect(() => {
+    loadMcpServers();
+    loadServerStatuses();
+  }, [loadMcpServers, loadServerStatuses]);
+
   // 创建服务器相关
   const [serverName, setServerName] = useState('');
   const [serverDescription, setServerDescription] = useState('');
@@ -32,66 +167,10 @@ const MCPManager = () => {
   const [serverCommand, setServerCommand] = useState('');
   const [serverArgs, setServerArgs] = useState('');
   const [serverEnv, setServerEnv] = useState('');
-  const [createMode, setCreateMode] = useState(false);
   const [editMode, setEditMode] = useState(false);
   
   // 当前编辑的选项卡
   const [activeTab, setActiveTab] = useState(0);
-  
-  // 删除确认
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-  const [serverToDelete, setServerToDelete] = useState(null);
-
-  // 新增：为每个服务器维护独立的loading状态
-  const [serverLoadingStates, setServerLoadingStates] = useState({});
-
-  // 加载MCP服务器列表
-  const loadMcpServers = async () => {
-    setLoading(true);
-    setError(null);
-    
-    try {
-      const response = await fetchMCPServers(false);
-      setMcpServers(response.data || []);
-    } catch (err) {
-      setError('加载MCP服务器列表失败：' + (err.response?.data?.detail || err.message));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // 加载服务器状态
-  const loadServerStatuses = async () => {
-    try {
-      const response = await fetchMCPServerStatuses();
-      // 确保 data 是数组
-      const statusData = response.data?.data || response.data || [];
-      setServerStatuses(Array.isArray(statusData) ? statusData : []);
-    } catch (err) {
-      console.error('加载MCP服务器状态失败：', err.response?.data?.detail || err.message);
-      setServerStatuses([]); // 出错时设置为空数组
-    }
-  };
-
-  // 初始加载
-  useEffect(() => {
-    loadMcpServers();
-  }, []);
-
-  // 定时轮询服务器状态
-  useEffect(() => {
-    if (mcpServers.length > 0) {
-      // 首次加载状态
-      loadServerStatuses();
-      
-      // // 设置定时器，每分钟刷新一次状态
-      // const statusInterval = setInterval(() => {
-      //   loadServerStatuses();
-      // }, 60000);
-
-      // return () => clearInterval(statusInterval);
-    }
-  }, [mcpServers]);
 
   // 选择服务器
   const selectServer = (server) => {
@@ -342,23 +421,6 @@ const MCPManager = () => {
     setActiveTab(newValue);
   };
 
-  // 获取服务器状态
-  const getServerStatus = (serverName) => {
-    // 找到服务器配置
-    const server = mcpServers.find(s => s.name === serverName);
-    // 找到服务器状态
-    const status = serverStatuses.find(status => status.name === serverName);
-    
-    // 返回合并的状态信息
-    return {
-      active: server ? server.active : false,  // 来自服务器配置
-      connected: status ? status.connected : false,  // 来自实际状态
-      healthy: status ? status.healthy : false,  // 来自实际状态
-      status: status ? status.status : 'unknown',  // 状态字符串
-      error_message: status ? status.error_message : null  // 错误信息
-    };
-  };
-
   // 状态指示器组件
   const StatusIndicator = ({ status }) => {
     const { active, connected, healthy } = status;
@@ -410,14 +472,14 @@ const MCPManager = () => {
     // 修复：在线服务器应该是激活且实际连接的服务器
     const onlineServers = serverStatuses.filter(status => {
       // 找到对应的服务器配置
-      const server = mcpServers.find(s => s.name === status.name);
+      const server = mcpServers.find(s => s.id === status.server_id);
       // 只有激活且实际连接健康的才算在线
       return server && server.active && status.connected && status.healthy;
     }).length;
     
     // 修复：激活但未连接的服务器数量
     const activatedButOffline = serverStatuses.filter(status => {
-      const server = mcpServers.find(s => s.name === status.name);
+      const server = mcpServers.find(s => s.id === status.server_id);
       return server && server.active && (!status.connected || !status.healthy);
     }).length;
     
@@ -473,6 +535,95 @@ const MCPManager = () => {
       setError(`服务器 "${server.name}" 重连失败：` + (err.response?.data?.detail || err.message));
     } finally {
       // 清除该服务器的loading状态
+      setServerLoadingStates(prev => ({
+        ...prev,
+        [server.id]: false
+      }));
+    }
+  };
+
+  // 连接服务器
+  const connectServer = async (server) => {
+    if (!server) return;
+    
+    setServerLoadingStates(prev => ({
+      ...prev,
+      [server.id]: true
+    }));
+    setError(null);
+    
+    try {
+      const response = await connectMCPServer(server.id);
+      
+      if (response.success || response.code === 200) {
+        setSuccess(`服务器 "${server.name}" 连接成功！`);
+        loadServerStatuses();
+      } else {
+        setError(`服务器 "${server.name}" 连接失败：` + (response.message || '未知错误'));
+      }
+    } catch (err) {
+      setError(`服务器 "${server.name}" 连接失败：` + (err.response?.data?.detail || err.message));
+    } finally {
+      setServerLoadingStates(prev => ({
+        ...prev,
+        [server.id]: false
+      }));
+    }
+  };
+
+  // 断开服务器连接
+  const disconnectServer = async (server) => {
+    if (!server) return;
+    
+    setServerLoadingStates(prev => ({
+      ...prev,
+      [server.id]: true
+    }));
+    setError(null);
+    
+    try {
+      const response = await disconnectMCPServer(server.id);
+      
+      if (response.success || response.code === 200) {
+        setSuccess(`服务器 "${server.name}" 已断开连接！`);
+        loadServerStatuses();
+      } else {
+        setError(`服务器 "${server.name}" 断开连接失败：` + (response.message || '未知错误'));
+      }
+    } catch (err) {
+      setError(`服务器 "${server.name}" 断开连接失败：` + (err.response?.data?.detail || err.message));
+    } finally {
+      setServerLoadingStates(prev => ({
+        ...prev,
+        [server.id]: false
+      }));
+    }
+  };
+
+  // 切换服务器激活状态
+  const toggleServerActive = async (server) => {
+    if (!server) return;
+    
+    setServerLoadingStates(prev => ({
+      ...prev,
+      [server.id]: true
+    }));
+    setError(null);
+    
+    try {
+      const updateData = { active: !server.active };
+      const response = await updateMCPServer(server.id, updateData);
+      
+      if (response.success || response.code === 200) {
+        setSuccess(`服务器 "${server.name}" ${!server.active ? '已激活' : '已停用'}！`);
+        loadMcpServers();
+        loadServerStatuses();
+      } else {
+        setError(`更新服务器状态失败：` + (response.message || '未知错误'));
+      }
+    } catch (err) {
+      setError(`更新服务器状态失败：` + (err.response?.data?.detail || err.message));
+    } finally {
       setServerLoadingStates(prev => ({
         ...prev,
         [server.id]: false
@@ -587,129 +738,214 @@ const MCPManager = () => {
             <Box sx={{ width: '100%' }}>
               <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2 }}>
                 <Typography variant="h6">可用MCP服务器</Typography>
-                <Button 
-                  startIcon={<Refresh />}
-                  onClick={() => {
-                    loadMcpServers();
-                    loadServerStatuses();
-                  }}
-                  disabled={loading}
-                >
-                  刷新
-                </Button>
+                <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+                  <FormControlLabel
+                    control={
+                      <Switch
+                        checked={autoRefresh}
+                        onChange={(e) => setAutoRefresh(e.target.checked)}
+                        size="small"
+                      />
+                    }
+                    label="自动刷新"
+                  />
+                  <Button 
+                    startIcon={<Refresh />}
+                    onClick={() => {
+                      loadMcpServers();
+                      loadServerStatuses();
+                    }}
+                    disabled={loading}
+                    size="small"
+                  >
+                    手动刷新
+                  </Button>
+                </Box>
               </Box>
               
               {/* 状态概览 */}
               {mcpServers.length > 0 && <StatusSummary />}
               
-              {mcpServers.length === 0 ? (
-                <Paper sx={{ p: 3, textAlign: 'center' }}>
-                  <Typography color="textSecondary">
-                    暂无MCP服务器，请点击"添加服务器"按钮创建
-                  </Typography>
-                </Paper>
-              ) : (
-                <List>
-                  {mcpServers.map((server) => (
-                    <React.Fragment key={server.id}>
-                      <ListItem 
-                        button 
-                        onClick={() => selectServer(server)}
-                        sx={{ 
-                          borderLeft: selectedServer?.id === server.id ? '4px solid #1976d2' : 'none',
-                          backgroundColor: selectedServer?.id === server.id ? 'rgba(25, 118, 210, 0.08)' : 'transparent'
-                        }}
-                      >
-                        <ListItemText
-                          primary={
-                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                              <Typography variant="subtitle1">{server.name}</Typography>
-                              <StatusIndicator status={getServerStatus(server.name)} />
-                            </Box>
-                          }
-                          secondary={server.description || '无描述'}
+              {/* 控制面板 */}
+              <Paper sx={{ p: 2, mb: 2 }}>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <Typography variant="h6">MCP服务器控制面板</Typography>
+                  <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+                    <FormControlLabel
+                      control={
+                        <Switch
+                          checked={autoRefresh}
+                          onChange={(e) => setAutoRefresh(e.target.checked)}
+                          size="small"
                         />
-                        
-                        <ListItemSecondaryAction>
-                          <Tooltip title={server.active ? '已启用' : '已禁用'}>
-                            <IconButton 
-                              edge="end" 
-                              color={server.active ? 'success' : 'default'}
-                              onClick={() => toggleServerStatus(server, !server.active)}
-                              disabled={loading} // 只有全局操作时才禁用
-                            >
-                              <PowerSettingsNew />
-                            </IconButton>
-                          </Tooltip>
-                          <Tooltip title={
-                            !server.active 
-                              ? "服务器未激活" 
-                              : getServerStatus(server.name).connected && getServerStatus(server.name).healthy
-                                ? "服务器运行正常" 
-                                : "服务器连接异常，点击重连"
-                          }>
-                            <IconButton 
-                              edge="end" 
-                              color={
-                                !server.active 
-                                  ? "default" 
-                                  : getServerStatus(server.name).connected && getServerStatus(server.name).healthy
-                                    ? "success" 
-                                    : "warning"
-                              }
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                // 只有在连接异常时才执行重连
-                                const status = getServerStatus(server.name);
-                                if (server.active && (!status.connected || !status.healthy)) {
-                                  refreshServerConnection(server);
-                                }
-                              }}
-                              disabled={
-                                !server.active || 
-                                serverLoadingStates[server.id] || // 使用该服务器的独立loading状态
-                                (getServerStatus(server.name).connected && getServerStatus(server.name).healthy)
-                              }
-                            >
-                              {serverLoadingStates[server.id] ? (
-                                <CircularProgress size={20} />
-                              ) : (
-                                <Sync />
+                      }
+                      label="自动刷新"
+                    />
+                    <Button 
+                      startIcon={<Refresh />}
+                      onClick={() => {
+                        loadMcpServers();
+                        loadServerStatuses();
+                      }}
+                      disabled={loading}
+                      size="small"
+                    >
+                      手动刷新
+                    </Button>
+                  </Box>
+                </Box>
+              </Paper>
+              
+              {/* 服务器列表 */}
+              <List>
+                {mcpServers.map((server) => {
+                  const status = getServerStatus(server.id);
+                  const statusDisplay = getStatusDisplay(status);
+                  const isLoading = serverLoadingStates[server.id];
+                  
+                  return (
+                    <Card key={server.id} sx={{ mb: 2 }}>
+                      <CardContent>
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                          {/* 服务器信息 */}
+                          <Box sx={{ flex: 1 }}>
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+                              <Typography variant="h6">{server.name}</Typography>
+                              <Chip 
+                                icon={statusDisplay.icon}
+                                label={statusDisplay.text}
+                                color={statusDisplay.color}
+                                size="small"
+                              />
+                              {server.active && (
+                                <Chip 
+                                  label="已激活" 
+                                  color="primary" 
+                                  size="small" 
+                                  variant="outlined"
+                                />
                               )}
-                            </IconButton>
-                          </Tooltip>
-                          <Tooltip title="编辑">
-                            <IconButton 
-                              edge="end" 
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                selectServer(server);
-                                startEditMode();
-                              }}
-                              disabled={loading} // 只有全局操作时才禁用
-                            >
-                              <Edit />
-                            </IconButton>
-                          </Tooltip>
-                          <Tooltip title="删除">
-                            <IconButton 
-                              edge="end" 
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                openDeleteDialog(server);
-                              }}
-                              disabled={loading} // 只有全局操作时才禁用
-                            >
-                              <Delete />
-                            </IconButton>
-                          </Tooltip>
-                        </ListItemSecondaryAction>
-                      </ListItem>
-                      <Divider />
-                    </React.Fragment>
-                  ))}
-                </List>
-              )}
+                            </Box>
+                            
+                            <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                              传输类型: {server.transport} | 
+                              {server.transport === 'stdio' && server.command && ` 命令: ${server.command}`}
+                              {server.transport !== 'stdio' && server.url && ` URL: ${server.url}`}
+                            </Typography>
+                            
+                            {status.error_message && (
+                              <Alert severity="error" sx={{ mt: 1 }}>
+                                {status.error_message}
+                              </Alert>
+                            )}
+                            
+                            {status.last_ping && (
+                              <Typography variant="caption" color="text.secondary">
+                                最后连接: {new Date(status.last_ping).toLocaleString()}
+                              </Typography>
+                            )}
+                          </Box>
+                          
+                          {/* 控制按钮 */}
+                          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, minWidth: 120 }}>
+                            {/* 激活/停用开关 */}
+                            <FormControlLabel
+                              control={
+                                <Switch
+                                  checked={server.active}
+                                  onChange={() => toggleServerActive(server)}
+                                  disabled={isLoading}
+                                  size="small"
+                                />
+                              }
+                              label={server.active ? "已激活" : "已停用"}
+                              labelPlacement="start"
+                            />
+                            
+                            {/* 连接控制按钮 */}
+                            {server.active && (
+                              <Box sx={{ display: 'flex', gap: 0.5 }}>
+                                {!status.connected ? (
+                                  <Tooltip title="连接服务器">
+                                    <IconButton
+                                      onClick={() => connectServer(server)}
+                                      disabled={isLoading}
+                                      color="primary"
+                                      size="small"
+                                    >
+                                      {isLoading ? <CircularProgress size={16} /> : <PlayArrow />}
+                                    </IconButton>
+                                  </Tooltip>
+                                ) : (
+                                  <Tooltip title="断开连接">
+                                    <IconButton
+                                      onClick={() => disconnectServer(server)}
+                                      disabled={isLoading}
+                                      color="error"
+                                      size="small"
+                                    >
+                                      {isLoading ? <CircularProgress size={16} /> : <Stop />}
+                                    </IconButton>
+                                  </Tooltip>
+                                )}
+                                
+                                <Tooltip title="重新连接">
+                                  <IconButton
+                                    onClick={() => refreshServerConnection(server)}
+                                    disabled={isLoading}
+                                    color="warning"
+                                    size="small"
+                                  >
+                                    {isLoading ? <CircularProgress size={16} /> : <Sync />}
+                                  </IconButton>
+                                </Tooltip>
+                                
+                                <Tooltip title="测试连接">
+                                  <IconButton
+                                    onClick={() => testConnection(server)}
+                                    disabled={isLoading}
+                                    color="info"
+                                    size="small"
+                                  >
+                                    {isLoading ? <CircularProgress size={16} /> : <Science />}
+                                  </IconButton>
+                                </Tooltip>
+                              </Box>
+                            )}
+                            
+                            {/* 编辑和删除按钮 */}
+                            <Box sx={{ display: 'flex', gap: 0.5 }}>
+                              <Tooltip title="编辑服务器">
+                                <IconButton
+                                  onClick={() => selectServer(server)}
+                                  disabled={isLoading}
+                                  size="small"
+                                >
+                                  <Edit />
+                                </IconButton>
+                              </Tooltip>
+                              
+                              <Tooltip title="删除服务器">
+                                <IconButton
+                                  onClick={() => {
+                                    setServerToDelete(server);
+                                    setDeleteDialogOpen(true);
+                                  }}
+                                  disabled={isLoading}
+                                  color="error"
+                                  size="small"
+                                >
+                                  <Delete />
+                                </IconButton>
+                              </Tooltip>
+                            </Box>
+                          </Box>
+                        </Box>
+                      </CardContent>
+                    </Card>
+                  );
+                })}
+              </List>
             </Box>
           )}
           

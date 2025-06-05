@@ -445,6 +445,21 @@ export const disconnectMCPServer = async (serverId) => {
 };
 
 /**
+ * 获取单个MCP服务器状态
+ * @param {string} serverId 服务器ID
+ * @returns {Promise<Object>} 服务器状态
+ */
+export const getMCPServerStatus = async (serverId) => {
+  try {
+    const response = await axios.get(`${API_BASE_URL}/mcp/servers/${serverId}/status`);
+    return response.data;
+  } catch (error) {
+    console.error('获取MCP服务器状态失败:', error);
+    throw error;
+  }
+};
+
+/**
  * 诊断网络和认证问题
  */
 export const diagnoseConnectionIssues = async () => {

@@ -90,6 +90,21 @@ class MCPRepository(BaseRepository[MCPServer]):
             logger.error(f"根据状态查找MCP服务器失败: {str(e)}")
             return []
     
+    async def find_by_ids(self, server_ids: List[str], user_id: str) -> List[MCPServer]:
+        """根据ID列表查找MCP服务器"""
+        try:
+            stmt = select(MCPServer).where(
+                and_(
+                    MCPServer.id.in_(server_ids),
+                    MCPServer.user_id == user_id
+                )
+            )
+            result = await self._session.execute(stmt)
+            return list(result.scalars().all())
+        except Exception as e:
+            logger.error(f"根据ID列表查找MCP服务器失败: {str(e)}")
+            return []
+    
     # === 用户权限相关方法 ===
     
     async def check_user_ownership(self, server_id: str, user_id: str) -> bool:
