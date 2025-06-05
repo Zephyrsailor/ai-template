@@ -137,11 +137,17 @@ async def get_mcp_service(
         _mcp_service_instances[user_id] = MCPService(session)
         logger.info(f"用户 {user_id} 的MCP服务实例创建完成，ID: {id(_mcp_service_instances[user_id])}")
     else:
-        # 更新session，确保使用当前请求的数据库会话
-        # 由于session是只读属性，我们需要重新创建repository
-        from ..repositories.mcp import MCPRepository
-        _mcp_service_instances[user_id].session = session
-        _mcp_service_instances[user_id].repository = MCPRepository(session)
+        # 🔥 修复：不要强行修改session属性，而是检查是否需要重新创建repository
+        existing_service = _mcp_service_instances[user_id]
+        
+        # 检查当前session是否与存储的session不同
+        if existing_service.session != session:
+            logger.debug(f"为用户 {user_id} 更新MCP服务的数据库会话")
+            # 创建新的repository实例而不是修改session
+            from ..repositories.mcp import MCPRepository
+            existing_service.repository = MCPRepository(session)
+            # 注意：不修改session属性，保持原有设计
+        
         logger.debug(f"复用用户 {user_id} 的MCP服务实例，ID: {id(_mcp_service_instances[user_id])}")
     
     # 定期清理不活跃的实例（每100次请求检查一次）

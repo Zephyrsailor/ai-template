@@ -398,15 +398,12 @@ class MCPService(BaseService[MCPServer, MCPRepository]):
                 actual_status = "inactive"
                 error_message = server.last_error or "无法连接到服务器"
             
-            # 只在状态真正改变时才更新数据库，并使用独立事务
+            # 🔥 修复：只在状态真正改变时才更新数据库，且不使用独立事务
             if server.status != actual_status:
                 logger.info(f"服务器 {server.name} 状态变化: {server.status} -> {actual_status}")
                 try:
-                    # 使用独立的数据库会话进行状态更新，避免影响主事务
-                    async for update_session in get_session():
-                        update_repository = MCPRepository(update_session)
-                        await update_repository.update_server_status(server.id, actual_status, error_message)
-                        break  # 只需要一次会话
+                    # 使用当前事务进行状态更新，避免独立事务导致的锁等待
+                    await self.repository.update_server_status(server.id, actual_status, error_message)
                 except Exception as e:
                     logger.error(f"更新服务器状态失败: {str(e)}")
                     # 继续执行，不影响状态返回
@@ -422,15 +419,12 @@ class MCPService(BaseService[MCPServer, MCPRepository]):
                 capabilities=capabilities
             )
         except Exception as e:
-            # 只在状态真正改变时才更新数据库
+            # 🔥 修复：只在状态真正改变时才更新数据库
             if server.status != "error":
                 logger.error(f"服务器 {server.name} 状态检查异常: {str(e)}")
                 try:
-                    # 使用独立的数据库会话进行错误状态更新
-                    async for update_session in get_session():
-                        update_repository = MCPRepository(update_session)
-                        await update_repository.update_server_status(server.id, "error", str(e))
-                        break  # 只需要一次会话
+                    # 使用当前事务进行错误状态更新
+                    await self.repository.update_server_status(server.id, "error", str(e))
                 except Exception as update_error:
                     logger.error(f"更新错误状态失败: {str(update_error)}")
             
@@ -566,13 +560,13 @@ class MCPService(BaseService[MCPServer, MCPRepository]):
     async def _auto_connect_server(self, server_id: str, user_id: str) -> None:
         """自动连接服务器（后台任务）"""
         try:
-            # 使用独立的数据库会话来避免会话状态冲突
+            # 🔥 修复：使用异步迭代器正确处理异步生成器
             async for independent_session in get_session():
                 independent_repository = MCPRepository(independent_session)
                 server = await independent_repository.get_by_id(server_id)
                 if server and server.active and server.auto_start:
                     await self._test_server_connection_via_hub(server, user_id)
-                break  # 只需要一次会话
+                break  # 只获取一次会话
         except Exception as e:
             logger.error(f"自动连接服务器 {server_id} 失败: {str(e)}")
     
