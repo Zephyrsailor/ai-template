@@ -116,14 +116,17 @@ class MCPHub:
         self._initialized = False
     
     # 工具相关方法
-    async def list_tools(self):
+    async def list_tools(self, server_names: Optional[List[str]] = None):
         """
-        列出所有可用工具
+        列出可用工具
+        
+        Args:
+            server_names: 可选的服务器名称列表，如果为None则返回所有服务器的工具
         
         Returns:
-            包含所有可用工具的ListToolsResult对象
+            包含指定服务器工具的ListToolsResult对象
         """
-        return await self.tool_manager.list_tools()
+        return await self.tool_manager.list_tools(server_names)
     
     async def call_tool(self, tool_name: str, arguments: Optional[Dict[str, Any]] = None) -> CallToolResult:
         """
@@ -139,17 +142,17 @@ class MCPHub:
         return await self.tool_manager.call_tool(tool_name, arguments)
     
     # 提示相关方法
-    async def list_prompts(self, server_name: Optional[str] = None):
+    async def list_prompts(self, server_names: Optional[List[str]] = None):
         """
         列出可用的提示模板
         
         Args:
-            server_name: 可选的服务器名称过滤器
+            server_names: 可选的服务器名称列表，如果为None则返回所有服务器的提示
             
         Returns:
             服务器名称到提示列表的映射
         """
-        return await self.prompt_manager.list_prompts(server_name)
+        return await self.prompt_manager.list_prompts(server_names)
     
     async def get_prompt(
         self, 
@@ -169,17 +172,17 @@ class MCPHub:
         return await self.prompt_manager.get_prompt(prompt_name, arguments)
     
     # 资源相关方法
-    async def list_resources(self, server_name: Optional[str] = None):
+    async def list_resources(self, server_names: Optional[List[str]] = None):
         """
         列出可用资源
         
         Args:
-            server_name: 可选的服务器名称过滤器
+            server_names: 可选的服务器名称列表，如果为None则返回所有服务器的资源
             
         Returns:
             服务器名称到资源URI列表的映射
         """
-        return await self.resource_manager.list_resources(server_name)
+        return await self.resource_manager.list_resources(server_names)
     
     async def get_resource(self, resource_uri: str) -> ReadResourceResult:
         """
@@ -321,16 +324,285 @@ class MCPHub:
 
     async def list_server_statuses(self, server_names: Optional[List[str]] = None) -> List[Dict[str, Any]]:
         """
-        获取服务器的健康/激活/连接状态
+        获取多个服务器的状态信息
         
         Args:
-            server_names: 要查询状态的服务器名称列表，如果为None则查询所有服务器
+            server_names: 服务器名称列表，如果为None则返回所有服务器状态
             
         Returns:
-            List[{"name":..., "active":..., "connected":..., "healthy":...}]
+            服务器状态信息列表
         """
-        # 如果没有指定服务器名称，则获取所有配置的服务器
         if server_names is None:
-            server_names = self.config_provider.get_all_server_names()
+            server_names = list(self.config_provider.get_all_server_names())
+        
+        statuses = []
+        for server_name in server_names:
+            status = await self.get_server_status(server_name)
+            statuses.append(status)
+        
+        return statuses
+    
+    def get_server_waiting_count(self, server_name: str) -> int:
+        """
+        获取指定服务器的等待者数量
+        
+        Args:
+            server_name: 服务器名称
             
-        return [await self.get_server_status(name) for name in server_names] 
+        Returns:
+            等待者数量
+        """
+        # 🔥 最小化修复：直接返回0，禁用等待计数功能
+        # 这样可以避免复杂的锁状态检查和潜在的死锁问题
+        return 0
+    
+    def get_all_server_waiting_counts(self) -> Dict[str, int]:
+        """
+        获取所有服务器的等待者数量
+        
+        Returns:
+            服务器名称到等待者数量的映射
+        """
+        result = {}
+        server_names = list(self.config_provider.get_all_server_names())
+        
+        for server_name in server_names:
+            waiting_count = self.get_server_waiting_count(server_name)
+            if waiting_count > 0:  # 只返回有等待者的服务器
+                result[server_name] = waiting_count
+        
+        return result
+
+    async def connect_single_server(self, server_name: str) -> bool:
+        """
+        连接单个服务器
+        
+        Args:
+            server_name: 服务器名称
+            
+        Returns:
+            是否连接成功
+        """
+        try:
+            self.logger.info(f"连接单个服务器: {server_name}")
+            
+            # 检查服务器配置是否存在
+            config = self.config_provider.get_server_config(server_name)
+            if not config:
+                self.logger.error(f"服务器 {server_name} 配置不存在")
+                return False
+            
+            # 如果服务器已经连接，返回true
+            if self.connection_manager.is_connected(server_name):
+                self.logger.info(f"服务器 {server_name} 已经连接")
+                return True
+            
+            # 🔧 修复：重连时先清理缓存，确保重新创建会话
+            try:
+                # 清理该服务器的缓存，强制重新发现
+                if hasattr(self.tool_manager, 'cache') and self.tool_manager.cache:
+                    await self.tool_manager.cache.delete(f"server_tools_{server_name}")
+                if hasattr(self.prompt_manager, 'cache') and self.prompt_manager.cache:
+                    await self.prompt_manager.cache.delete(f"server_prompts_{server_name}")
+                if hasattr(self.resource_manager, 'cache') and self.resource_manager.cache:
+                    await self.resource_manager.cache.delete(f"server_resources_{server_name}")
+                
+                results = await asyncio.gather(
+                    self.tool_manager.discover_tools([server_name]),
+                    self.prompt_manager.discover_prompts([server_name]),
+                    self.resource_manager.discover_resources([server_name]),
+                    return_exceptions=True
+                )
+                
+                # 检查是否有严重错误
+                serious_errors = []
+                for i, result in enumerate(results):
+                    if isinstance(result, Exception):
+                        error_type = ["tools", "prompts", "resources"][i]
+                        self.logger.warning(f"发现{error_type}时出错: {result}")
+                        # 只有连接错误才是严重的，其他错误（如没有工具）可以忽略
+                        if "ConnectionError" in str(type(result)) or "连接" in str(result).lower():
+                            serious_errors.append(result)
+                
+                # 多层检查连接是否成功
+                # 1. 等待一下让连接状态更新
+                await asyncio.sleep(0.1)
+                
+                # 2. 检查多个指标
+                has_session = server_name in self.session_manager.sessions
+                is_connected = self.connection_manager.is_connected(server_name)
+                has_tools = server_name in self.tool_manager.tools_by_server
+                
+                # 3. 综合判断连接成功
+                connected = has_session and (is_connected or has_tools)
+                
+                if connected:
+                    # 确保连接状态正确设置
+                    if not is_connected:
+                        self.connection_manager._active_connections[server_name] = True
+                    
+                    self.logger.info(f"服务器 {server_name} 连接成功")
+                    if serious_errors:
+                        self.logger.warning(f"服务器 {server_name} 连接成功但部分操作失败: {serious_errors}")
+                else:
+                    self.logger.error(f"服务器 {server_name} 连接失败")
+                    if serious_errors:
+                        self.logger.error(f"连接失败的详细错误: {serious_errors}")
+                
+                return connected
+                
+            except Exception as e:
+                self.logger.error(f"连接服务器 {server_name} 时发生异常: {e}")
+                return False
+            
+        except Exception as e:
+            self.logger.error(f"连接服务器 {server_name} 失败: {e}")
+            return False
+
+    async def disconnect_single_server(self, server_name: str) -> bool:
+        """
+        断开单个服务器连接（保留配置）
+        
+        Args:
+            server_name: 服务器名称
+            
+        Returns:
+            是否断开成功
+        """
+        try:
+            self.logger.info(f"断开单个服务器: {server_name}")
+            
+            # 如果服务器没有连接，返回true
+            if not self.connection_manager.is_connected(server_name):
+                self.logger.info(f"服务器 {server_name} 已经断开")
+                return True
+            
+            # 🔥 修复：只关闭连接，不移除配置
+            # 1. 关闭会话连接
+            await self.session_manager.close_session(server_name)
+            
+            # 2. 清理工具缓存（但保留配置）
+            if hasattr(self.tool_manager, 'tools_by_server') and server_name in self.tool_manager.tools_by_server:
+                # 移除该服务器的工具缓存
+                server_tools = self.tool_manager.tools_by_server[server_name]
+                for tool in server_tools:
+                    namespaced_name = f"{server_name}/{tool.name}"
+                    if namespaced_name in self.tool_manager.tools_by_name:
+                        del self.tool_manager.tools_by_name[namespaced_name]
+                del self.tool_manager.tools_by_server[server_name]
+            
+            # 3. 清理提示和资源缓存
+            if hasattr(self.prompt_manager, 'prompts_by_server') and server_name in self.prompt_manager.prompts_by_server:
+                del self.prompt_manager.prompts_by_server[server_name]
+            
+            if hasattr(self.resource_manager, 'resources_by_server') and server_name in self.resource_manager.resources_by_server:
+                del self.resource_manager.resources_by_server[server_name]
+            
+            # 检查断开是否成功
+            connected = self.connection_manager.is_connected(server_name)
+            if not connected:
+                self.logger.info(f"服务器 {server_name} 断开成功")
+            else:
+                self.logger.error(f"服务器 {server_name} 断开失败")
+            
+            return not connected
+            
+        except Exception as e:
+            self.logger.error(f"断开服务器 {server_name} 失败: {e}")
+            return False 
+
+    # ==========================================
+    # 公共服务器配置管理方法
+    # ==========================================
+    
+    async def add_server(self, server_name: str) -> bool:
+        """
+        添加服务器配置到Hub（添加配置并尝试连接）
+        
+        Args:
+            server_name: 服务器名称
+            
+        Returns:
+            是否添加成功
+        """
+        try:
+            self.logger.info(f"添加服务器配置: {server_name}")
+            
+            # 检查配置是否存在
+            config = self.config_provider.get_server_config(server_name)
+            if not config:
+                self.logger.error(f"服务器 {server_name} 配置不存在，无法添加")
+                return False
+            
+            # 如果已经存在，返回成功
+            if self.connection_manager.is_connected(server_name):
+                self.logger.info(f"服务器 {server_name} 已经存在")
+                return True
+            
+            # 添加服务器（连接并发现工具）- 后台运行不阻塞
+            asyncio.create_task(self._add_server(server_name))
+            
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"添加服务器 {server_name} 失败: {e}")
+            return False
+
+    async def remove_server(self, server_name: str) -> bool:
+        """
+        从Hub中移除服务器配置（断开连接并移除所有相关信息）
+        
+        Args:
+            server_name: 服务器名称
+            
+        Returns:
+            是否移除成功
+        """
+        try:
+            self.logger.info(f"移除服务器配置: {server_name}")
+            
+            # 如果服务器不存在，返回成功
+            if not self.connection_manager.is_connected(server_name):
+                self.logger.info(f"服务器 {server_name} 不存在，无需移除")
+                return True
+            
+            # 移除服务器（关闭连接并清理所有信息）- 后台运行不阻塞
+            asyncio.create_task(self._remove_server(server_name))
+            
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"移除服务器 {server_name} 失败: {e}")
+            return False
+
+    async def update_server(self, server_name: str) -> bool:
+        """
+        更新Hub中的服务器配置（重新加载配置并重新发现能力）
+        
+        Args:
+            server_name: 服务器名称
+            
+        Returns:
+            是否更新成功
+        """
+        try:
+            self.logger.info(f"更新服务器配置: {server_name}")
+            
+            # 检查配置是否存在
+            config = self.config_provider.get_server_config(server_name)
+            if not config:
+                self.logger.error(f"服务器 {server_name} 配置不存在，无法更新")
+                return False
+            
+            # 更新服务器（重新发现工具）- 后台运行不阻塞
+            asyncio.create_task(self._update_server(server_name))
+            
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"更新服务器 {server_name} 失败: {e}")
+            return False
+
+    # ==========================================
+    # 内部服务器管理方法（保持私有）
+    # ========================================== 

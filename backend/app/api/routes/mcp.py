@@ -463,11 +463,13 @@ async def get_user_stats(
     current_user: User = Depends(get_current_user),
     mcp_service: MCPService = Depends(get_mcp_service)
 ):
-    """获取用户MCP统计信息"""
+    """获取用户MCP使用统计"""
     try:
         stats = await mcp_service.get_user_stats(current_user.id)
         return api_response(data=stats)
     except Exception as e:
         return api_response(code=500, message=f"获取统计信息失败: {str(e)}")
+
+
 
 

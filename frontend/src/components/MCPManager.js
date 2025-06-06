@@ -119,7 +119,7 @@ const MCPManager = () => {
     try {
       const response = await fetchMCPServers();
       if (response.success) {
-        setMcpServers(response.data || []);
+      setMcpServers(response.data || []);
       }
     } catch (err) {
       console.error('加载MCP服务器失败:', err);
@@ -156,7 +156,7 @@ const MCPManager = () => {
   // 初始加载
   useEffect(() => {
     loadMcpServers();
-    loadServerStatuses();
+      loadServerStatuses();
   }, [loadMcpServers, loadServerStatuses]);
 
   // 创建服务器相关
@@ -749,17 +749,17 @@ const MCPManager = () => {
                     }
                     label="自动刷新"
                   />
-                  <Button 
-                    startIcon={<Refresh />}
-                    onClick={() => {
-                      loadMcpServers();
-                      loadServerStatuses();
-                    }}
-                    disabled={loading}
+                <Button 
+                  startIcon={<Refresh />}
+                  onClick={() => {
+                    loadMcpServers();
+                    loadServerStatuses();
+                  }}
+                  disabled={loading}
                     size="small"
-                  >
+                >
                     手动刷新
-                  </Button>
+                </Button>
                 </Box>
               </Box>
               
@@ -792,7 +792,7 @@ const MCPManager = () => {
                     >
                       手动刷新
                     </Button>
-                  </Box>
+                            </Box>
                 </Box>
               </Paper>
               
@@ -823,6 +823,16 @@ const MCPManager = () => {
                                   color="primary" 
                                   size="small" 
                                   variant="outlined"
+                                />
+                              )}
+                              {/* 等待者数量显示 */}
+                              {status.waiting_count > 0 && (
+                                <Chip 
+                                  label={`等待中: ${status.waiting_count}`}
+                                  color="warning" 
+                                  size="small" 
+                                  variant="outlined"
+                                  icon={<CircularProgress size={12} />}
                                 />
                               )}
                             </Box>
@@ -866,21 +876,21 @@ const MCPManager = () => {
                             {server.active && (
                               <Box sx={{ display: 'flex', gap: 0.5 }}>
                                 {!status.connected ? (
-                                  <Tooltip title="连接服务器">
-                                    <IconButton
+                                  <Tooltip title={status.waiting_count > 0 ? `有 ${status.waiting_count} 个操作在等待，请稍后` : "连接服务器"}>
+                            <IconButton 
                                       onClick={() => connectServer(server)}
-                                      disabled={isLoading}
+                                      disabled={isLoading || status.waiting_count > 0}
                                       color="primary"
                                       size="small"
-                                    >
+                            >
                                       {isLoading ? <CircularProgress size={16} /> : <PlayArrow />}
-                                    </IconButton>
-                                  </Tooltip>
+                            </IconButton>
+                          </Tooltip>
                                 ) : (
-                                  <Tooltip title="断开连接">
-                                    <IconButton
+                                  <Tooltip title={status.waiting_count > 0 ? `有 ${status.waiting_count} 个操作在等待，请稍后` : "断开连接"}>
+                            <IconButton 
                                       onClick={() => disconnectServer(server)}
-                                      disabled={isLoading}
+                                      disabled={isLoading || status.waiting_count > 0}
                                       color="error"
                                       size="small"
                                     >
@@ -889,21 +899,21 @@ const MCPManager = () => {
                                   </Tooltip>
                                 )}
                                 
-                                <Tooltip title="重新连接">
+                                <Tooltip title={status.waiting_count > 0 ? `有 ${status.waiting_count} 个操作在等待，请稍后` : "重新连接"}>
                                   <IconButton
                                     onClick={() => refreshServerConnection(server)}
-                                    disabled={isLoading}
+                                    disabled={isLoading || status.waiting_count > 0}
                                     color="warning"
                                     size="small"
-                                  >
+                            >
                                     {isLoading ? <CircularProgress size={16} /> : <Sync />}
-                                  </IconButton>
-                                </Tooltip>
+                            </IconButton>
+                          </Tooltip>
                                 
-                                <Tooltip title="测试连接">
-                                  <IconButton
+                                <Tooltip title={status.waiting_count > 0 ? `有 ${status.waiting_count} 个操作在等待，请稍后` : "测试连接"}>
+                            <IconButton 
                                     onClick={() => testConnection(server)}
-                                    disabled={isLoading}
+                                    disabled={isLoading || status.waiting_count > 0}
                                     color="info"
                                     size="small"
                                   >
@@ -920,24 +930,24 @@ const MCPManager = () => {
                                   onClick={() => selectServer(server)}
                                   disabled={isLoading}
                                   size="small"
-                                >
-                                  <Edit />
-                                </IconButton>
-                              </Tooltip>
+                            >
+                              <Edit />
+                            </IconButton>
+                          </Tooltip>
                               
                               <Tooltip title="删除服务器">
-                                <IconButton
+                            <IconButton 
                                   onClick={() => {
                                     setServerToDelete(server);
                                     setDeleteDialogOpen(true);
-                                  }}
+                              }}
                                   disabled={isLoading}
                                   color="error"
                                   size="small"
-                                >
-                                  <Delete />
-                                </IconButton>
-                              </Tooltip>
+                            >
+                              <Delete />
+                            </IconButton>
+                          </Tooltip>
                             </Box>
                           </Box>
                         </Box>
@@ -945,7 +955,7 @@ const MCPManager = () => {
                     </Card>
                   );
                 })}
-              </List>
+                </List>
             </Box>
           )}
           

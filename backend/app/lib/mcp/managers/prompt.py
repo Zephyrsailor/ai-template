@@ -43,7 +43,11 @@ class PromptManager(BaseManager):
         # 提示索引
         self.prompts_by_server: Dict[str, List[Prompt]] = {}
         self.prompts_by_name: Dict[str, NamespacedPrompt] = {}
-        self.discovery_lock = Lock()
+        self.initialized = False
+        
+        # 🔥 修复：使用服务器级别的锁，而不是全局锁
+        self.server_locks: Dict[str, Lock] = {}  # 每个服务器一个锁
+        self.discovery_lock = Lock()  # 只用于管理server_locks字典
     
     async def discover_prompts(self, server_names: Optional[List[str]] = None) -> None:
         """
@@ -60,26 +64,32 @@ class PromptManager(BaseManager):
             self.logger.warning("没有具有提示能力的服务器")
             return
             
-        async with self.discovery_lock:
-            # 并行发现所有服务器的提示
-            discover_tasks = [self._discover_server_prompts(name) for name in server_names]
-            server_prompts = await asyncio.gather(*discover_tasks, return_exceptions=True)
+        # 🔥 修复：并行发现提示，每个服务器使用独立的锁
+        discover_tasks = [self._discover_server_prompts_with_lock(name) for name in server_names]
+        server_prompts = await asyncio.gather(*discover_tasks, return_exceptions=True)
             
             # 处理结果
-            for i, result in enumerate(server_prompts):
-                server_name = server_names[i]
+        for i, result in enumerate(server_prompts):
+            server_name = server_names[i]
+            
+            if isinstance(result, Exception):
+                self.logger.error(f"从服务器'{server_name}'发现提示失败: {result}")
+                continue
                 
-                if isinstance(result, Exception):
-                    self.logger.error(f"从服务器'{server_name}'发现提示失败: {result}")
-                    continue
+            prompts = result
+            if not prompts:
+                self.logger.info(f"服务器'{server_name}'没有可用的提示")
+                continue
                     
-                prompts = result
-                if not prompts:
-                    self.logger.info(f"服务器'{server_name}'没有可用的提示")
-                    continue
-                    
+            # 🔥 使用服务器锁来更新索引，避免并发冲突
+            async with await self._get_server_lock(server_name):
                 # 更新索引
                 self.prompts_by_server[server_name] = prompts
+                
+                # 清理旧的命名空间索引
+                old_keys = [k for k, v in self.prompts_by_name.items() if v.server_name == server_name]
+                for key in old_keys:
+                    del self.prompts_by_name[key]
                 
                 # 添加到命名空间索引
                 for prompt in prompts:
@@ -94,6 +104,23 @@ class PromptManager(BaseManager):
             if self.cache:
                 await self.cache.set("prompts_by_server", self.prompts_by_server)
                 await self.cache.set("prompts_by_name", {k: v.to_dict() for k, v in self.prompts_by_name.items()})
+    
+    async def _get_server_lock(self, server_name: str) -> Lock:
+        """获取服务器专用的锁"""
+        async with self.discovery_lock:  # 保护server_locks字典的并发访问
+            if server_name not in self.server_locks:
+                self.server_locks[server_name] = Lock()
+            return self.server_locks[server_name]
+    
+    async def _discover_server_prompts_with_lock(self, server_name: str) -> List[Prompt]:
+        """使用服务器锁发现提示"""
+        async with await self._get_server_lock(server_name):
+            return await self._discover_server_prompts(server_name)
+    
+    def get_server_lock_waiting_count(self, server_name: str) -> int:
+        """获取指定服务器锁的等待者数量"""
+        # 🔥 最小化修复：直接返回0，禁用等待计数
+        return 0
     
     async def _discover_server_prompts(self, server_name: str) -> List[Prompt]:
         """从单个服务器发现提示。"""
@@ -131,12 +158,12 @@ class PromptManager(BaseManager):
             self.logger.error(f"从服务器'{server_name}'列出提示失败: {e}")
             raise
     
-    async def list_prompts(self, server_name: Optional[str] = None) -> Mapping[str, List[Prompt]]:
+    async def list_prompts(self, server_names: Optional[List[str]] = None) -> Mapping[str, List[Prompt]]:
         """
         列出可用的提示模板。
         
         Args:
-            server_name: 可选的服务器名称过滤器
+            server_names: 可选的服务器名称列表，如果为None则返回所有服务器的提示
             
         Returns:
             服务器名称到提示列表的映射
@@ -147,10 +174,11 @@ class PromptManager(BaseManager):
             
         result = {}
         
-        if server_name:
-            # 返回特定服务器的提示
-            if server_name in self.prompts_by_server:
-                result[server_name] = self.prompts_by_server[server_name]
+        if server_names is not None:
+            # 返回指定服务器的提示
+            for server_name in server_names:
+                if server_name in self.prompts_by_server:
+                    result[server_name] = self.prompts_by_server[server_name]
         else:
             # 返回所有服务器的提示
             result = self.prompts_by_server

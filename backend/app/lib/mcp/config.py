@@ -53,10 +53,74 @@ class ConfigProvider:
         self._load_from_env()
     
     def reload(self) -> None:
-        """重新加载配置"""
+        """重新加载配置 - 已修复单服务器隔离问题"""
         print("重新加载MCP配置...")
-        self._load_config()
-        print(f"重新加载完成，发现 {len(self.servers)} 个服务器配置")
+        
+        # 🔥 核心修复：当使用config_dict时，进行智能合并而不是完全清空
+        if self.config_dict:
+            # 当配置来源是config_dict时，进行增量更新
+            self._reload_from_dict_incremental()
+        else:
+            # 当配置来源是文件或环境变量时，可以安全地完全重新加载
+            backup_servers = self.servers.copy()
+            self.servers.clear()
+            self._load_config()
+            
+            # 智能合并：如果新配置数量少于备份，保留备份中未在新配置里的服务器
+            if len(self.servers) < len(backup_servers):
+                for name, config in backup_servers.items():
+                    if name not in self.servers:
+                        print(f"保留未在新配置中的服务器: {name}")
+                        self.servers[name] = config
+        
+        print(f"重新加载完成，总计 {len(self.servers)} 个服务器配置")
+        for name in self.servers:
+            print(f"  - {name}")
+    
+    def _reload_from_dict_incremental(self) -> None:
+        """从config_dict进行增量重新加载，不清空现有配置"""
+        if not self.config_dict:
+            return
+            
+        # 🔥 关键：不清空现有配置，直接进行增量更新
+        print("使用增量模式重新加载config_dict配置...")
+        
+        # 解析新的配置
+        new_servers = {}
+        temp_provider = ConfigProvider(config_dict=self.config_dict.copy())
+        new_servers = temp_provider.servers
+        
+        # 增量更新：添加或更新新配置中的服务器
+        for name, config in new_servers.items():
+            if name in self.servers:
+                print(f"更新现有服务器配置: {name}")
+            else:
+                print(f"添加新服务器配置: {name}")
+            self.servers[name] = config
+        
+        print(f"增量重新加载完成，总计 {len(self.servers)} 个服务器配置")
+    
+    def add_or_update_server(self, server_config: Dict[str, Any]) -> None:
+        """添加或更新单个服务器配置（避免影响其他服务器）"""
+        normalized_config = self._normalize_server_config(server_config)
+        server_name = normalized_config.get("name")
+        
+        if not server_name:
+            print("警告：服务器配置缺少名称，跳过添加")
+            return
+            
+        self.servers[server_name] = normalized_config
+        print(f"{'更新' if server_name in self.servers else '添加'}服务器配置: {server_name}")
+    
+    def remove_server_config(self, server_name: str) -> bool:
+        """移除单个服务器配置"""
+        if server_name in self.servers:
+            del self.servers[server_name]
+            print(f"移除服务器配置: {server_name}")
+            return True
+        else:
+            print(f"服务器配置不存在，无法移除: {server_name}")
+            return False
     
     def _load_from_file(self, config_path: str) -> None:
         """从JSON文件加载配置。"""
@@ -119,6 +183,15 @@ class ConfigProvider:
                 if "name" in server:
                     normalized = self._normalize_server_config(server)
                     self.servers[server["name"]] = normalized
+        elif "mcp_servers" in config:
+            # Hub配置格式: {"mcp_servers": {"server1": {...}, "server2": {...}}}
+            for name, server in config["mcp_servers"].items():
+                if isinstance(server, dict):
+                    server_config = dict(server)
+                    if "name" not in server_config:
+                        server_config["name"] = name
+                    normalized = self._normalize_server_config(server_config)
+                    self.servers[name] = normalized
         elif "servers" in config:
             # servers:[]格式
             for server in config["servers"]:

@@ -621,7 +621,7 @@ class ChatService:
                                       stop_key: Optional[str]) -> AsyncGenerator[StreamEvent, None]:
         """执行单次聊天迭代（添加工具调用安全检查）"""
         has_tool_call = False
-        tool_call_json = None        
+        tool_call_json = None
         
         # 重置本轮状态
         iteration_state.collected_thinking = ""
