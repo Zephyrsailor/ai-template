@@ -64,9 +64,9 @@ def api_response(data: Optional[T] = None, code: int = APIConstants.HTTP_OK, mes
 # 服务层依赖 - 统一入口
 # ============================================================================
 
-# MCP服务实例字典 - 每个用户一个实例
-_mcp_service_instances: Dict[str, MCPService] = {}
-_mcp_service_last_access: Dict[str, datetime] = {}  # 记录最后访问时间
+# 🔥 移除错误的全局MCPService实例缓存
+# _mcp_service_instances: Dict[str, MCPService] = {}
+# _mcp_service_last_access: Dict[str, datetime] = {}
 
 async def get_user_service(session: AsyncSession = Depends(get_session)) -> UserService:
     """获取用户服务"""
@@ -116,64 +116,17 @@ async def get_conversation_service(session: AsyncSession = Depends(get_session))
     return ConversationService(session)
 
 async def get_mcp_service(
-    session: AsyncSession = Depends(get_session),
-    current_user: Optional[User] = Depends(get_optional_current_user)
+    session: AsyncSession = Depends(get_session)
 ) -> MCPService:
-    """获取MCP服务 - 每用户单例模式"""
-    global _mcp_service_instances, _mcp_service_last_access
+    """获取MCP服务 - 每请求创建新实例，使用全局ConnectionPool"""
+    # 🔥 正确设计：每个请求创建新的MCPService实例，使用当前Session
+    # ConnectionPool由MCPService内部使用全局单例
+    return MCPService(session)
     
-    # 如果没有用户信息，创建临时实例（用于匿名访问）
-    if current_user is None:
-        logger.debug("创建匿名MCP服务实例")
-        return MCPService(session)
-    
-    user_id = current_user.id
-    
-    # 更新最后访问时间
-    _mcp_service_last_access[user_id] = datetime.now()
-    
-    if user_id not in _mcp_service_instances:
-        logger.info(f"为用户 {user_id} 创建MCP服务实例")
-        _mcp_service_instances[user_id] = MCPService(session)
-        logger.info(f"用户 {user_id} 的MCP服务实例创建完成，ID: {id(_mcp_service_instances[user_id])}")
-    else:
-        # 更新session，确保使用当前请求的数据库会话
-        # 由于session是只读属性，我们需要重新创建repository
-        from ..repositories.mcp import MCPRepository
-        _mcp_service_instances[user_id].session = session
-        _mcp_service_instances[user_id].repository = MCPRepository(session)
-        logger.debug(f"复用用户 {user_id} 的MCP服务实例，ID: {id(_mcp_service_instances[user_id])}")
-    
-    # 定期清理不活跃的实例（每100次请求检查一次）
-    if random.randint(1, 100) == 1:
-        await _cleanup_inactive_mcp_services()
-    
-    return _mcp_service_instances[user_id]
-
-async def _cleanup_inactive_mcp_services():
-    """清理不活跃的MCP服务实例"""
-    global _mcp_service_instances, _mcp_service_last_access
-    
-    from datetime import datetime, timedelta
-    
-    # 清理超过1小时未访问的实例
-    inactive_threshold = datetime.now() - timedelta(hours=1)
-    inactive_users = []
-    
-    for user_id, last_access in _mcp_service_last_access.items():
-        if last_access < inactive_threshold:
-            inactive_users.append(user_id)
-    
-    for user_id in inactive_users:
-        if user_id in _mcp_service_instances:
-            try:
-                # 清理MCP连接
-                await _mcp_service_instances[user_id].cleanup_user_connections(user_id)
-                del _mcp_service_instances[user_id]
-                del _mcp_service_last_access[user_id]
-                logger.info(f"清理用户 {user_id} 的不活跃MCP服务实例")
-            except Exception as e:
-                logger.error(f"清理用户 {user_id} 的MCP服务实例失败: {str(e)}")
+# 🔥 移除不需要的清理函数
+# async def _cleanup_inactive_mcp_services():
+#     """清理不活跃的MCP服务实例"""
+#     pass
 
 async def get_user_llm_config_service(session: AsyncSession = Depends(get_session)) -> UserLLMConfigService:
     """获取用户LLM配置服务"""
@@ -242,8 +195,8 @@ async def get_chat_service(
     
     # 使用同一个session创建所有服务，确保事务一致性
     knowledge_service = KnowledgeService(session)
-    # mcp service 使用单例模式
-    mcp_service = await get_mcp_service(session, current_user)
+    # 🔥 修复：直接创建MCPService实例，避免异步函数调用问题
+    mcp_service = MCPService(session)
     conversation_service = ConversationService(session)
     user_llm_config_service = UserLLMConfigService(session)
     

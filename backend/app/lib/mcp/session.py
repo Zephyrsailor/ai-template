@@ -191,7 +191,13 @@ class SessionManager:
                     self.logger.warning(f"清理会话时出错: {e}")
             
             # 创建新会话
-            return await self._create_and_initialize_session(server_name)
+            session = await self._create_and_initialize_session(server_name)
+            return session
+    
+    def get_session_lock_waiting_count(self, server_name: str) -> int:
+        """获取指定服务器session锁的等待者数量（简单实现）"""
+        # 🔥 最小化修复：直接返回0，禁用等待计数
+        return 0
     
     async def _create_and_initialize_session(self, server_name: str) -> ClientSession:
         """创建并初始化会话。"""
@@ -239,6 +245,10 @@ class SessionManager:
             server_session.session_context = session_context
             
             self.sessions[server_name] = server_session
+
+            
+            # 🔧 修复：通知ConnectionManager连接成功
+            self.connection_manager._active_connections[server_name] = True
             
             self.logger.info(f"服务器'{server_name}'的会话已成功初始化")
             
@@ -380,6 +390,11 @@ class SessionManager:
             session_info = self.sessions[server_name]
             await session_info.cleanup()
             del self.sessions[server_name]
+            
+            # 🔧 修复：通知ConnectionManager连接已断开
+            if server_name in self.connection_manager._active_connections:
+                del self.connection_manager._active_connections[server_name]
+            
             self.logger.info(f"已关闭服务器'{server_name}'的会话")
             
     async def close_all(self) -> None:

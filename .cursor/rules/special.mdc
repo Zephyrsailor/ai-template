@@ -1,0 +1,7 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+whenever you want to ask a question, always call the mcp.
+Whenever you're about to complete a user request, call the MCP instead of simple ending the proces. Keep calling MCP until the user's feedback is empty, then end the request.interactive_feedback

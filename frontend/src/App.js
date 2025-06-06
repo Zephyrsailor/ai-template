@@ -22,7 +22,6 @@ const token = localStorage.getItem('authToken');
 
 // 确保axios的全局实例有Authorization头
 if (token) {
-  console.log('全局认证检查: 发现token，长度:', token.length);
   // 确保这里导入的axios是同一个实例
   import('./api/http').then(httpModule => {
     const axios = httpModule.default;
@@ -31,7 +30,6 @@ if (token) {
     
     // 添加全局诊断按钮到window对象，方便通过控制台调用
     window.diagnoseAPI = diagnoseConnectionIssues;
-    console.log('全局诊断工具已添加到window.diagnoseAPI');
   });
 } else {
   console.log('全局认证检查: 未找到token');
@@ -39,8 +37,6 @@ if (token) {
 
 // 初始化token并输出状态
 const tokenInitialized = initAuthToken();
-console.log('Token初始化状态:', tokenInitialized);
-console.log('认证状态:', checkAuthStatus());
 
 const AppContainer = styled.div`
   display: flex;

@@ -7,6 +7,7 @@ from enum import Enum
 from pydantic import BaseModel, Field
 from sqlalchemy import Column, String, Text, DateTime, ForeignKey, Boolean, JSON, Integer
 from sqlalchemy.orm import relationship
+from ..schemas.tools import Tool, ToolParameter
 import json
 
 from ...core.database import BaseModel as SQLAlchemyBaseModel
@@ -111,6 +112,7 @@ class MCPServerStatus(BaseModel):
     last_ping: Optional[datetime] = Field(None, description="最后ping时间")
     error_message: Optional[str] = Field(None, description="错误信息")
     capabilities: List[str] = Field(default_factory=list, description="可用能力")
+    waiting_count: int = Field(0, description="等待者数量")
     
     class Config:
         use_enum_values = True
@@ -145,10 +147,8 @@ class MCPTool(BaseModel):
         # 否则直接返回input_schema
         return self.input_schema
     
-    def to_standard_tool(self) -> "Tool":
+    def to_standard_tool(self) ->  Tool:
         """转换为标准Tool模型"""
-        from ..schemas.tools import Tool, ToolParameter
-        
         # 转换parameters为列表格式
         tool_parameters = []
         if self.input_schema and "properties" in self.input_schema:
@@ -258,6 +258,9 @@ class MCPConnectionTest(BaseModel):
     message: str = Field(..., description="测试结果消息")
     latency_ms: Optional[int] = Field(None, description="延迟(毫秒)")
     capabilities: List[MCPCapability] = Field(default_factory=list, description="检测到的能力")
+    
+    class Config:
+        extra = "forbid"  # 禁止额外字段
 
 
 # === SQLAlchemy模型 (用于数据库) ===
@@ -284,7 +287,7 @@ class MCPServer(SQLAlchemyBaseModel):
     timeout = Column(Integer, default=30)
     status = Column(String(20), default="inactive")
     
-    # 能力和状态
+    # 能力和状态 - 保留字段但服务层不主动更新，状态以Hub为准
     capabilities = Column(JSON, default=list)  # 服务器能力列表
     last_error = Column(Text)
     last_connected_at = Column(DateTime)

@@ -42,7 +42,11 @@ class ResourceManager(BaseManager):
         # 资源索引
         self.resources_by_server: Dict[str, List[str]] = {}
         self.resources_by_uri: Dict[str, NamespacedResource] = {}
-        self.discovery_lock = Lock()
+        self.initialized = False
+        
+        # 🔥 修复：使用服务器级别的锁，而不是全局锁
+        self.server_locks: Dict[str, Lock] = {}  # 每个服务器一个锁
+        self.discovery_lock = Lock()  # 只用于管理server_locks字典
     
     async def discover_resources(self, server_names: Optional[List[str]] = None) -> None:
         """
@@ -137,12 +141,12 @@ class ResourceManager(BaseManager):
             self.logger.error(f"从服务器'{server_name}'列出资源失败: {e}")
             raise
     
-    async def list_resources(self, server_name: Optional[str] = None) -> Dict[str, List[str]]:
+    async def list_resources(self, server_names: Optional[List[str]] = None) -> Dict[str, List[str]]:
         """
         列出可用的资源。
         
         Args:
-            server_name: 可选的服务器名称过滤器
+            server_names: 可选的服务器名称列表，如果为None则返回所有服务器的资源
             
         Returns:
             服务器名称到资源URI列表的映射
@@ -153,10 +157,11 @@ class ResourceManager(BaseManager):
             
         result = {}
         
-        if server_name:
-            # 返回特定服务器的资源
-            if server_name in self.resources_by_server:
-                result[server_name] = self.resources_by_server[server_name]
+        if server_names is not None:
+            # 返回指定服务器的资源
+            for server_name in server_names:
+                if server_name in self.resources_by_server:
+                    result[server_name] = self.resources_by_server[server_name]
         else:
             # 返回所有服务器的资源
             result = self.resources_by_server

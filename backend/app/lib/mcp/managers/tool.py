@@ -42,7 +42,11 @@ class ToolManager(BaseManager):
         # 工具索引
         self.tools_by_server: Dict[str, List[Tool]] = {}
         self.tools_by_name: Dict[str, NamespacedTool] = {}
-        self.discovery_lock = Lock()
+        self.initialized = False
+        
+        # 🔥 修复：使用服务器级别的锁，而不是全局锁
+        self.server_locks: Dict[str, Lock] = {}  # 每个服务器一个锁
+        self.discovery_lock = Lock()  # 只用于管理server_locks字典
     
     async def discover_tools(self, server_names: Optional[List[str]] = None) -> None:
         """
@@ -59,26 +63,32 @@ class ToolManager(BaseManager):
             self.logger.warning("没有可用的服务器来发现工具")
             return
             
-        async with self.discovery_lock:
-            # 并行发现所有服务器的工具
-            discover_tasks = [self._discover_server_tools(name) for name in server_names]
-            server_tools = await asyncio.gather(*discover_tasks, return_exceptions=True)
+        # 🔥 修复：并行发现工具，每个服务器使用独立的锁
+        discover_tasks = [self._discover_server_tools_with_lock(name) for name in server_names]
+        server_tools = await asyncio.gather(*discover_tasks, return_exceptions=True)
             
-            # 处理结果
-            for i, result in enumerate(server_tools):
-                server_name = server_names[i]
+        # 处理结果
+        for i, result in enumerate(server_tools):
+            server_name = server_names[i]
+            
+            if isinstance(result, Exception):
+                self.logger.error(f"从服务器'{server_name}'发现工具失败: {result}")
+                continue
                 
-                if isinstance(result, Exception):
-                    self.logger.error(f"从服务器'{server_name}'发现工具失败: {result}")
-                    continue
+            tools = result
+            if not tools:
+                self.logger.info(f"服务器'{server_name}'没有可用的工具")
+                continue
                     
-                tools = result
-                if not tools:
-                    self.logger.info(f"服务器'{server_name}'没有可用的工具")
-                    continue
-                    
+            # 🔥 使用服务器锁来更新索引，避免并发冲突
+            async with await self._get_server_lock(server_name):
                 # 更新索引
                 self.tools_by_server[server_name] = tools
+                
+                # 清理旧的命名空间索引
+                old_keys = [k for k, v in self.tools_by_name.items() if v.server_name == server_name]
+                for key in old_keys:
+                    del self.tools_by_name[key]
                 
                 # 添加到命名空间索引
                 for tool in tools:
@@ -93,6 +103,23 @@ class ToolManager(BaseManager):
             if self.cache:
                 await self.cache.set("tools_by_server", self.tools_by_server)
                 await self.cache.set("tools_by_name", {k: v.to_dict() for k, v in self.tools_by_name.items()})
+    
+    async def _get_server_lock(self, server_name: str) -> Lock:
+        """获取服务器专用的锁"""
+        async with self.discovery_lock:  # 保护server_locks字典的并发访问
+            if server_name not in self.server_locks:
+                self.server_locks[server_name] = Lock()
+            return self.server_locks[server_name]
+    
+    async def _discover_server_tools_with_lock(self, server_name: str) -> List[Tool]:
+        """使用服务器锁发现工具"""
+        async with await self._get_server_lock(server_name):
+            return await self._discover_server_tools(server_name)
+    
+    def get_server_lock_waiting_count(self, server_name: str) -> int:
+        """获取指定服务器锁的等待者数量"""
+        # 🔥 最小化修复：直接返回0，禁用等待计数
+        return 0
     
     async def _discover_server_tools(self, server_name: str) -> List[Tool]:
         """从单个服务器发现工具。"""
@@ -124,9 +151,12 @@ class ToolManager(BaseManager):
             self.logger.error(f"从服务器'{server_name}'列出工具失败: {e}")
             raise
     
-    async def list_tools(self) -> ListToolsResult:
+    async def list_tools(self, server_names: Optional[List[str]] = None) -> ListToolsResult:
         """
-        列出所有可用的工具。
+        列出可用的工具。
+        
+        Args:
+            server_names: 可选的服务器名称列表，如果为None则返回所有服务器的工具
         
         Returns:
             带有命名空间工具列表的ListToolsResult
@@ -135,7 +165,24 @@ class ToolManager(BaseManager):
         if not self.initialized:
             await self.discover_tools()
             
-        # 创建带有命名空间的工具列表
+        # 如果指定了服务器列表，只返回这些服务器的工具
+        if server_names is not None:
+            namespaced_tools = []
+            for server_name in server_names:
+                if server_name in self.tools_by_server:
+                    server_tools = self.tools_by_server[server_name]
+                    for tool in server_tools:
+                        namespaced_name = f"{server_name}/{tool.name}"
+                        tool_copy = Tool(
+                            name=namespaced_name,
+                            description=f"[{server_name}] {tool.description}",
+                            inputSchema=tool.inputSchema,
+                        )
+                        namespaced_tools.append(tool_copy)
+            
+            return ListToolsResult(tools=namespaced_tools)
+        
+        # 返回所有服务器的工具（原有逻辑）
         namespaced_tools = []
         for namespaced_name, namespaced_tool in self.tools_by_name.items():
             # 创建原始工具的副本，但使用命名空间名称
